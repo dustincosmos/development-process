@@ -337,11 +337,13 @@ def render_header() -> None:
         """
         <style>
         .block-container {
-            padding-top: 1rem;
+            padding-top: 1.6rem;
         }
         h3 {
-            margin-top: 0.1rem;
-            margin-bottom: 0.6rem;
+            margin-top: 0;
+            margin-bottom: 0.7rem;
+            padding-top: 0.15rem;
+            line-height: 1.3;
         }
         div[data-testid="stCaptionContainer"] p {
             font-size: 0.85rem;
