@@ -2271,6 +2271,10 @@ def main() -> None:
     init_db()
     render_app_header()
     main_menu = st.sidebar.radio("메인 메뉴", ["기초정보", "사전견적 시뮬레이션", "시뮬레이션", "History"], key="main_menu")
+    if st.sidebar.button("참조데이터 새로고침", key="cost_reference_data_refresh", use_container_width=True):
+        reset_cache()
+        flash_success("최신 데이터를 다시 불러왔습니다.")
+        st.rerun()
     if main_menu == "기초정보":
         render_master_tab()
     elif main_menu == "사전견적 시뮬레이션":

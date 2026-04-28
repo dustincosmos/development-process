@@ -4,7 +4,14 @@ import streamlit as st
 
 from db.schema import init_db
 from domain.constants import APP_GROUP_SETS, MENU_GROUPS
-from services.shell_service import filter_accessible_menus, login_panel, render_flash_messages, render_header
+from services.reference_data_service import reset_cache
+from services.shell_service import (
+    filter_accessible_menus,
+    flash_success,
+    login_panel,
+    render_flash_messages,
+    render_header,
+)
 from ui_apps.development_pages import render_development_page
 from ui_apps.master_pages import render_master_page
 from ui_apps.operations_pages import render_operations_page
@@ -87,6 +94,10 @@ def run_app(*, page_title: str, group_names: list[str], page_config_key: str) ->
     if st.session_state.get(current_menu_key) not in visible_menus:
         st.session_state[current_menu_key] = visible_menus[0]
     menu = st.sidebar.selectbox("메뉴", visible_menus, key=current_menu_key)
+    if st.sidebar.button("참조데이터 새로고침", key=f"refresh_reference_data_{page_config_key}", use_container_width=True):
+        reset_cache()
+        flash_success("최신 데이터를 다시 불러왔습니다.")
+        st.rerun()
     print(
         "[MENU] selection",
         {
