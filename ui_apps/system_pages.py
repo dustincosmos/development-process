@@ -827,6 +827,7 @@ def render_structure_page() -> None:
     st.subheader(page_name)
     show_permission_hint(page_name)
     projects_df = get_projects()
+    products_df = get_products()
     if projects_df.empty:
         st.info("등록된 프로젝트가 없습니다.")
         return
@@ -835,13 +836,23 @@ def render_structure_page() -> None:
     selected_label = st.selectbox("프로젝트 선택", options=project_labels)
     project_row = projects_df[projects_df.apply(lambda row: f"{row['project_code']} | {row['product_name']}", axis=1) == selected_label].iloc[0]
     project_code = project_row["project_code"]
+    project_products = products_df[products_df["project_id"] == project_row["project_id"]].copy() if not products_df.empty else pd.DataFrame()
+    product_code_text = ", ".join(
+        sorted(
+            {
+                str(row["product_code"]).strip()
+                for _, row in project_products.iterrows()
+                if str(row.get("product_code") or "").strip()
+            }
+        )
+    ) or "-"
 
     st.markdown("**프로젝트 개요**")
     overview = pd.DataFrame(
         [
             {
                 "프로젝트코드": project_row["project_code"],
-                "상품코드": project_row["product_code"],
+                "상품코드": product_code_text,
                 "고객": project_row["customer_name"],
                 "제품명": project_row["product_name"],
                 "개발형태": project_row["development_type"],
