@@ -27,6 +27,14 @@ def parse_json_text(raw: object) -> dict:
         return {}
 
 
+def _coerce_dict(raw: object) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        return parse_json_text(raw)
+    return {}
+
+
 def make_order_code(item_code: str, prefix_code: str = "RQ", revision_variant_no: str = "", material_variant_no: str = "") -> str:
     date_part = datetime.now().strftime("%Y%m%d")
     revision_variant = str(revision_variant_no or "").strip()
@@ -509,6 +517,7 @@ def render_measurement_inputs(
     single_card: bool = False,
     card_title: str | None = None,
 ) -> dict:
+    defaults = defaults if isinstance(defaults, dict) else {}
     result: dict[str, object] = {}
     slots = MEASUREMENT_SLOT_KEYS
     if single_card:
@@ -649,7 +658,7 @@ def render_injection_op_review_inputs(defaults: dict) -> dict:
 
 def render_injection_quality_review_inputs(defaults: dict) -> tuple[str, str, str]:
     st.markdown("**사출 품질 검토**")
-    after_defaults = parse_json_text(defaults.get("after_24h_measurement", "")) if isinstance(defaults.get("after_24h_measurement", ""), str) else defaults.get("after_24h_measurement", {}) or {}
+    after_defaults = _coerce_dict(defaults.get("after_24h_measurement", ""))
     measurement_titles = {
         slot: str(defaults.get(f"instruction_measure_title_{slot}", "") or defaults.get(f"instruction_measurement_title_{slot}", "") or "")
         for slot in MEASUREMENT_SLOT_KEYS
@@ -662,7 +671,7 @@ def render_injection_quality_review_inputs(defaults: dict) -> tuple[str, str, st
         base_part = measurement_titles.get(slot, "")
         if base_part:
             after_defaults[f"24H_{slot}_측정부위"] = base_part
-    review_defaults = parse_json_text(defaults.get("quality_comment", "")) if isinstance(defaults.get("quality_comment", ""), str) else defaults.get("quality_comment", {}) or {}
+    review_defaults = _coerce_dict(defaults.get("quality_comment", ""))
     tabs = st.tabs(["24시간 후 측정", "품질 체크", "품질 의견"])
     with tabs[0]:
         after_measurement_values = render_measurement_inputs(
@@ -693,7 +702,7 @@ def render_injection_quality_review_inputs(defaults: dict) -> tuple[str, str, st
 
 def render_assembly_quality_review_inputs(defaults: dict) -> tuple[str, str, str]:
     st.markdown("**조립 품질 검토**")
-    review_defaults = parse_json_text(defaults.get("quality_comment", "")) if isinstance(defaults.get("quality_comment", ""), str) else defaults.get("quality_comment", {}) or {}
+    review_defaults = _coerce_dict(defaults.get("quality_comment", ""))
     c1, c2 = st.columns(2)
     with c1:
         measurement_checks = st.multiselect("측정/시험 체크", ["분리력", "기능규격", "간섭", "체결력", "외관손상", "조립성"], default=review_defaults.get("measurement_checks", []), key="assembly_measurement_checks")
@@ -709,7 +718,7 @@ def render_assembly_quality_review_inputs(defaults: dict) -> tuple[str, str, str
 
 def render_print_quality_review_inputs(defaults: dict) -> tuple[str, str, str]:
     st.markdown("**인쇄/후가공/사상 품질 검토**")
-    review_defaults = parse_json_text(defaults.get("quality_comment", "")) if isinstance(defaults.get("quality_comment", ""), str) else defaults.get("quality_comment", {}) or {}
+    review_defaults = _coerce_dict(defaults.get("quality_comment", ""))
     c1, c2 = st.columns(2)
     with c1:
         measurement_checks = st.multiselect("측정/시험 체크", ["색상", "인쇄 위치", "내스크래치", "밀착성", "번짐/이염", "외관"], default=review_defaults.get("measurement_checks", []), key="print_measurement_checks")
