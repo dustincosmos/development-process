@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -61,6 +62,29 @@ PROJECT_SAVE_DEBUG_KEY = "project_save_debug"
 PROJECT_SAVE_RENDER_COUNT_KEY = "project_save_render_count"
 PROJECT_SAVE_SUBMIT_COUNT_KEY = "project_save_submit_count"
 PROJECT_SAVE_DEBUG_VERSION = "project-save-debug-v3"
+
+
+def _drawing_revision_from_filename(file_name: str) -> str:
+    """Return a valid YYMMDD revision embedded in a drawing file name."""
+    match = re.search(r"(?<!\d)(?:20)?(\d{2})(\d{2})(\d{2})(?!\d)", file_name or "")
+    if match is None:
+        return ""
+    revision_no = "".join(match.groups())
+    try:
+        datetime.strptime(revision_no, "%y%m%d")
+    except ValueError:
+        return ""
+    return revision_no
+
+
+def _is_valid_drawing_revision(revision_no: str) -> bool:
+    if re.fullmatch(r"\d{6}", revision_no) is None:
+        return False
+    try:
+        datetime.strptime(revision_no, "%y%m%d")
+    except ValueError:
+        return False
+    return True
 
 
 def _update_project_save_debug(*, stage: str, message: str = "", payload: dict | None = None) -> None:
@@ -599,18 +623,33 @@ def render_product_drawings_page() -> None:
                 drawing_no = st.text_input("제품도면 번호", value=selected_row["drawing_no"] if selected_row is not None else "")
             with top_c2:
                 drawing_name = st.text_input("제품도면명", value=selected_row["drawing_name"] if selected_row is not None else "")
-            current_revision_num = parse_revision_number(selected_row["revision_no"]) if selected_row is not None else -1
+            uploaded_drawing = st.file_uploader("제품도면 첨부", type=None, key="product_drawing_upload")
             with top_c3:
                 create_new_revision = st.checkbox("신규 리비전 등록", value=False, disabled=selected_row is None)
-                next_revision_num = 0 if selected_row is None else current_revision_num + (1 if create_new_revision else 0)
-                revision_no = format_revision(next_revision_num)
-                st.text_input("리비전", value=revision_no, disabled=True)
+                revision_key = f"product_drawing_revision_{selected_project_code}_{int(selected_row['product_drawing_id']) if selected_row is not None else 'new'}"
+                upload_marker_key = f"{revision_key}_upload_name"
+                default_revision = (
+                    str(selected_row["revision_no"]).strip()
+                    if selected_row is not None and pd.notna(selected_row["revision_no"])
+                    else datetime.now().strftime("%y%m%d")
+                )
+                uploaded_file_name = uploaded_drawing.name if uploaded_drawing is not None else ""
+                if uploaded_file_name and st.session_state.get(upload_marker_key) != uploaded_file_name:
+                    extracted_revision = _drawing_revision_from_filename(uploaded_file_name)
+                    if extracted_revision:
+                        st.session_state[revision_key] = extracted_revision
+                    st.session_state[upload_marker_key] = uploaded_file_name
+                revision_no = st.text_input(
+                    "리비전 (YYMMDD)",
+                    value=default_revision,
+                    key=revision_key,
+                    help="도면 파일명의 YYYYMMDD 또는 YYMMDD를 자동으로 불러오며, 직접 수정할 수 있습니다.",
+                ).strip()
             ref_c1, ref_c2 = st.columns([1.2, 1])
             with ref_c1:
                 file_note = st.text_input("파일/링크 메모", value=selected_row["file_note"] if selected_row is not None else "")
             with ref_c2:
                 is_current = st.checkbox("현재 유효본", value=bool(selected_row["is_current"]) if selected_row is not None else True)
-            uploaded_drawing = st.file_uploader("제품도면 첨부", type=None, key="product_drawing_upload")
             notes = st.text_area("비고", height=88, value=selected_row["notes"] if selected_row is not None else "")
             save_clicked, delete_clicked = render_page_actions(
                 [
@@ -625,8 +664,32 @@ def render_product_drawings_page() -> None:
                     st.rerun()
                 st.error(message)
             elif save_clicked:
-                if not drawing_no or not drawing_name:
+                normalized_drawing_no = drawing_no.strip()
+                normalized_drawing_name = drawing_name.strip()
+                existing_revision = (
+                    str(selected_row["revision_no"]).strip()
+                    if selected_row is not None and pd.notna(selected_row["revision_no"])
+                    else ""
+                )
+                legacy_revision_unchanged = bool(
+                    selected_row is not None
+                    and not create_new_revision
+                    and revision_no == existing_revision
+                )
+                duplicate_revision = project_df[
+                    (project_df["drawing_no"] == normalized_drawing_no)
+                    & (project_df["revision_no"].astype(str).str.strip() == revision_no)
+                ]
+                if selected_row is not None and not create_new_revision:
+                    duplicate_revision = duplicate_revision[
+                        duplicate_revision["product_drawing_id"] != selected_row["product_drawing_id"]
+                    ]
+                if not normalized_drawing_no or not normalized_drawing_name:
                     st.error("제품도면 번호와 제품도면명을 입력해 주세요.")
+                elif not legacy_revision_unchanged and not _is_valid_drawing_revision(revision_no):
+                    st.error("리비전은 실제 날짜에 해당하는 YYMMDD 6자리로 입력해 주세요.")
+                elif not duplicate_revision.empty:
+                    st.error("같은 도면 번호에 동일한 리비전이 이미 등록되어 있습니다.")
                 elif create_new_revision and uploaded_drawing is None:
                     st.error("신규 리비전 등록 시 도면 파일을 다시 첨부해 주세요.")
                 else:
@@ -637,8 +700,8 @@ def render_product_drawings_page() -> None:
                         create_new_revision=create_new_revision,
                         payload={
                             "project_id": project_id,
-                            "drawing_no": drawing_no,
-                            "drawing_name": drawing_name,
+                            "drawing_no": normalized_drawing_no,
+                            "drawing_name": normalized_drawing_name,
                             "revision_no": revision_no,
                             "file_note": file_note,
                             "file_path": file_path,
