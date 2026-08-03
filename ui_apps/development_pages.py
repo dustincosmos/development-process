@@ -2516,7 +2516,11 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             for row in active_meta_lines
             if row["item_id"] is not None and pd.notna(row["item_id"]) and (root_item_id is None or int(row["item_id"]) != int(root_item_id))
         }
-        tree_items = list_project_item_tree_options(project_code) if project_code else []
+        tree_items = (
+            list_project_item_tree_options(project_code, int(selected_product_id))
+            if project_code and selected_product_id
+            else []
+        )
         current_meta_mode = st.session_state.get(meta_mode_key, "new") if requirement_scope == "조립품" else "new"
         if requirement_scope == "조립품" and root_item_id and not bom_df.empty:
             descendant_ids: set[int] = set()
@@ -2551,7 +2555,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             tree_items = filtered_tree_items
         tree_generated = bool(project_code and selected_product_id)
         if tree_generated and project_code and not tree_items:
-            st.warning("선택한 프로젝트에 등록된 공정품이 없습니다. 먼저 공정품 정보를 확인해 주세요.")
+            st.warning("선택한 상품에 등록된 공정품이 없습니다. 먼저 공정품 정보를 확인해 주세요.")
 
         left_col, right_col = st.columns([0.55, 2.45])
 
