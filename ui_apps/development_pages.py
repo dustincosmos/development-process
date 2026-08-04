@@ -127,6 +127,25 @@ def _save_instruction_safely(selected_row, *, payload, current_user_name):
         return None
 
 
+def _compact_tree_item_label(label: str) -> None:
+    parts = str(label or "").split(" | ")
+    first = parts[0] if parts else ""
+    leading_spaces = len(first) - len(first.lstrip())
+    item_code = first.strip()
+    item_name = parts[1].strip() if len(parts) > 1 else ""
+    padding_left = min((leading_spaces // 3) * 8, 24)
+    tooltip = escape(" | ".join(value for value in (item_code, item_name) if value), quote=True)
+    st.markdown(
+        f"""
+        <div title="{tooltip}" style="height:42px;min-width:0;padding-left:{padding_left}px;overflow:hidden;line-height:1.2;">
+            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(item_code)}</div>
+            <div style="font-size:0.76rem;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(item_name)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _safe_date_value(value) -> object | None:
     if value in (None, "", "None"):
         return None
@@ -2617,23 +2636,22 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             tree_display_options = []
             root_tree_display_label = ""
             if requirement_scope == "조립품" and root_item_id:
+                root_item_row = get_item_row(root_item_id)
+                root_item_code = str(root_item_row["item_code"] or "루트 조립품") if root_item_row is not None and "item_code" in root_item_row.keys() else "루트 조립품"
+                root_item_name = str(root_item_row["item_name"] or "") if root_item_row is not None and "item_name" in root_item_row.keys() else ""
                 if tree_mode == "조합" and active_meta_row is not None and "meta_code" in active_meta_row.keys() and active_meta_row["meta_code"]:
-                    root_tree_display_label = str(active_meta_row["meta_code"] or "")
-                else:
-                    root_item_row = get_item_row(root_item_id)
-                    root_tree_display_label = str(root_item_row["item_code"] or "루트 조립품") if root_item_row is not None and "item_code" in root_item_row.keys() else "루트 조립품"
+                    root_item_code = str(active_meta_row["meta_code"] or root_item_code)
+                root_tree_display_label = f"{root_item_code} | {root_item_name}"
             for label, iid in tree_items:
-                if tree_mode == "조합" and " | " in label:
-                    item_code = label.split(" | ")[0].strip()
-                    tree_display_options.append((item_code, iid))
-                elif " | " in label:
+                if " | " in label:
                     parts = label.split(" | ")
                     prefix = ""
                     first = parts[0]
                     if first.strip() != first:
                         prefix = first[: len(first) - len(first.lstrip())]
                     item_code = first.strip()
-                    tree_display_options.append((f"{prefix}{item_code}", iid))
+                    item_name = parts[1].strip() if len(parts) > 1 else ""
+                    tree_display_options.append((f"{prefix}{item_code} | {item_name}", iid))
                 else:
                     tree_display_options.append((label, iid))
             selected_item_label = ""
@@ -2642,7 +2660,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             if assembly_requires_meta:
                 st.caption("조립공정 요구를 먼저 저장해 메타를 생성하면 공정품 트리가 열립니다.")
             elif tree_generated and tree_display_options:
-                st.caption("선택 | 코드 | 상태 | 입력")
+                st.caption("선택 | 공정품 | 상태 | 입력")
                 if requirement_scope == "조립품" and tree_mode == "조합":
                     if combo_initial_selection_mode or current_meta_mode == "new":
                         st.caption("조합은 필요한 공정품만 체크한 뒤 `공정품 구성 저장`을 누르고 입력합니다.")
@@ -2739,7 +2757,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                             disabled=True,
                         )
                     with root_c2:
-                        st.text(root_tree_display_label)
+                        _compact_tree_item_label(root_tree_display_label)
                     with root_c3:
                         st.caption(root_status_text)
                     with root_c4:
@@ -2773,7 +2791,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                     else:
                         status_text = ""
                     with row_c2:
-                        st.text(label)
+                        _compact_tree_item_label(label)
                     with row_c3:
                         st.caption(status_text)
                     with row_c4:
