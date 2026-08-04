@@ -69,6 +69,13 @@ from services.development_page_service import (
     parse_json_text,
     render_product_drawing_reference,
 )
+from services.inspection_plan_service import (
+    add_check_id_results,
+    apply_previous_quality_defaults,
+    inspection_plan_from_details,
+    parse_dict as parse_inspection_dict,
+    required_result_issues,
+)
 from services.reference_data_service import get_item_bom, get_mold_drawings, get_molds, get_print_films, get_products
 from services.customer_report_service import (
     build_injection_customer_report_filename,
@@ -106,6 +113,18 @@ from services.shell_service import flash_success, render_history_panel, render_p
 
 def _select_index(options: list[str], value: str) -> int:
     return options.index(value) if value in options else 0
+
+
+def _save_instruction_safely(selected_row, *, payload, current_user_name):
+    try:
+        return save_experiment_instruction(
+            selected_row,
+            payload=payload,
+            current_user_name=current_user_name,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        return None
 
 
 def _safe_date_value(value) -> object | None:
@@ -2957,6 +2976,22 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                 linked_existing_order_row = linked_existing_match.iloc[0]
 
         selected_detail = parse_json_text(selected_row["requirement_detail_json"]) if selected_row is not None else {}
+        if selected_row is None and selected_item_id and not df.empty:
+            previous_requirement_rows = df[
+                (pd.to_numeric(df["item_id"], errors="coerce") == int(selected_item_id))
+                & (df["status"].astype(str) == "완료")
+            ].sort_values("experiment_order_id", ascending=False)
+            if not previous_requirement_rows.empty:
+                previous_requirement_row = previous_requirement_rows.iloc[0]
+                previous_requirement_detail = parse_json_text(previous_requirement_row["requirement_detail_json"])
+                selected_detail = apply_previous_quality_defaults(
+                    selected_detail,
+                    previous_requirement_detail,
+                    source_order_id=int(previous_requirement_row["experiment_order_id"]),
+                    source_order_code=str(previous_requirement_row["order_code"]),
+                )
+                if any(selected_detail.get(f"spec_location_{idx}") or selected_detail.get(f"spec_value_{idx}") for idx in range(1, 5)):
+                    st.info(f"이전 완료 요구의 품질기준을 기본값으로 불러왔습니다. 출처: {previous_requirement_row['order_code']}")
         root_meta_df = (
             df[(df["project_code"] == project_code) & (df["item_id"] == int(root_item_id))].copy()
             if project_code and root_item_id
@@ -3010,6 +3045,9 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
         detail_payload = {
             "target_position": selected_detail.get("target_position", ""),
             "sample_reference": selected_detail.get("sample_reference", ""),
+            "_quality_default_source_type": selected_detail.get("_quality_default_source_type"),
+            "_quality_default_source_id": selected_detail.get("_quality_default_source_id"),
+            "_quality_default_source_code": selected_detail.get("_quality_default_source_code"),
             "_meta_scope": requirement_scope,
             "_meta_product_id": int(selected_product_id) if selected_product_id else None,
             "_meta_tree_mode": tree_mode if tree_generated else "기본",
@@ -5046,11 +5084,14 @@ def render_sample_instructions_page(instruction_scope: str = "공정품") -> Non
                             "appearance_position_note": appearance_positions[0].strip() if len(appearance_positions) > 0 else "",
                         },
                     }
-                    _, instruction_code, mb_request_code = save_experiment_instruction(
+                    saved_instruction = _save_instruction_safely(
                         selected_instruction_row,
                         payload=instruction_payload,
                         current_user_name=current_user()["user_name"],
                     )
+                    if saved_instruction is None:
+                        return
+                    _, instruction_code, mb_request_code = saved_instruction
                     clear_instruction_return_state()
                     success_message = f"실험지시를 저장했습니다. 코드: {instruction_code}"
                     if mb_request_code:
@@ -5285,11 +5326,14 @@ def render_sample_instructions_page(instruction_scope: str = "공정품") -> Non
                             "meta_requirement_id": int(selected_meta_id) if selected_meta_id else None,
                         },
                     }
-                    _, instruction_code, mb_request_code = save_experiment_instruction(
+                    saved_instruction = _save_instruction_safely(
                         selected_instruction_row,
                         payload=instruction_payload,
                         current_user_name=current_user()["user_name"],
                     )
+                    if saved_instruction is None:
+                        return
+                    _, instruction_code, mb_request_code = saved_instruction
                     clear_instruction_return_state()
                     success_message = f"조립 실험지시를 저장했습니다. 코드: {instruction_code}"
                     if mb_request_code:
@@ -5392,6 +5436,13 @@ def render_sample_instructions_page(instruction_scope: str = "공정품") -> Non
 
             if selected_order_row is not None:
                 selected_instruction_detail = parse_json_text(selected_instruction_row["instruction_detail_json"]) if selected_instruction_row is not None else {}
+                if selected_instruction_detail.get("inspection_plan"):
+                    plan_version = int(selected_instruction_detail.get("plan_version") or 1)
+                    plan_source = selected_instruction_detail.get("inspection_plan_source") or {}
+                    plan_source_code = plan_source.get("order_code") or plan_source.get("instruction_code") or selected_order_row["order_code"]
+                    st.caption(f"검사계획 v{plan_version} / 출처: {plan_source_code}")
+                    if selected_instruction_detail.get("inspection_plan_changes"):
+                        st.warning(f"현재 지시에서 요구 품질기준 {len(selected_instruction_detail['inspection_plan_changes'])}건을 조정했습니다.")
                 measurement_instruction_titles = {
                     slot: str(
                         selected_instruction_detail.get(f"measurement_title_{slot}", "") or
@@ -6032,11 +6083,14 @@ def render_sample_instructions_page(instruction_scope: str = "공정품") -> Non
                         "requirement_completed": bool(requirement_completed),
                         "detail_payload": detail_payload,
                     }
-                    _, instruction_code, mb_request_code = save_experiment_instruction(
+                    saved_instruction = _save_instruction_safely(
                         selected_instruction_row,
                         payload=instruction_payload,
                         current_user_name=current_user()["user_name"],
                     )
+                    if saved_instruction is None:
+                        return
+                    _, instruction_code, mb_request_code = saved_instruction
                     clear_instruction_return_state()
                     success_message = f"실험지시를 저장했습니다. 코드: {instruction_code}"
                     if mb_request_code:
@@ -6336,6 +6390,8 @@ def render_op_page(page_name: str = "실험", injection_only: bool = False) -> N
             **op_review_values,
         }
         condition_input = json.dumps(condition_values, ensure_ascii=False)
+        inspection_plan = inspection_plan_from_details(instruction_detail, order_detail)
+        immediate_values = add_check_id_results(immediate_values, inspection_plan, timing="immediate")
         first_measurement = json.dumps(immediate_values, ensure_ascii=False)
         first_action = ""
         (save_clicked,) = render_page_actions([("실험 내용 저장", "save_injection_op_review", True)])
@@ -6697,6 +6753,8 @@ def render_op_page(page_name: str = "실험", injection_only: bool = False) -> N
                 "measure_values": measure_values,
             }
         condition_input = json.dumps(condition_values, ensure_ascii=False) if process_type == "사출" else ""
+        inspection_plan = inspection_plan_from_details(instruction_detail, order_detail)
+        immediate_values = add_check_id_results(immediate_values, inspection_plan, timing="immediate") if process_type == "사출" else immediate_values
         first_measurement = json.dumps(immediate_values, ensure_ascii=False) if process_type == "사출" else ""
         first_action = ""
         (save_clicked,) = render_page_actions([("실험 내용 저장", "save_op_review", True)])
@@ -6846,16 +6904,20 @@ def render_quality_page() -> None:
                     instruction_due = instruction_detail.get("expected_receipt_date") or "-"
                     st.text_input("지시 납기일", value=instruction_due, disabled=True, key="quality_instruction_expected_due")
         sample_row = workflow_row if workflow_row is not None else workflow_df[workflow_df["sample_id"] == sample_id].iloc[0]
+        inspection_plan = inspection_plan_from_details(instruction_detail, order_detail)
+        inspection_plan_map = {str(item.get("check_id")): item for item in inspection_plan}
         quality_defaults = {
             "second_measurement": sample_row["second_measurement"],
             "after_24h_measurement": sample_row["after_24h_measurement"],
             "quality_comment": sample_row["quality_comment"],
-            "instruction_measure_title_A": instruction_detail.get("measurement_title_A", ""),
-            "instruction_measure_title_B": instruction_detail.get("measurement_title_B", ""),
-            "instruction_measure_title_C": instruction_detail.get("measurement_title_C", ""),
-            "instruction_measure_spec_A": instruction_detail.get("measurement_spec_A", ""),
-            "instruction_measure_spec_B": instruction_detail.get("measurement_spec_B", ""),
-            "instruction_measure_spec_C": instruction_detail.get("measurement_spec_C", ""),
+            **{
+                f"instruction_measure_title_{slot}": instruction_detail.get(f"measurement_title_{slot}", "") or inspection_plan_map.get(f"DIM-{slot}", {}).get("name", "")
+                for slot in ("A", "B", "C")
+            },
+            **{
+                f"instruction_measure_spec_{slot}": instruction_detail.get(f"measurement_spec_{slot}", "") or inspection_plan_map.get(f"DIM-{slot}", {}).get("spec", "")
+                for slot in ("A", "B", "C")
+            },
         }
         render_section_title("품질검토 입력")
         if sample_row["process_type"] == "사출":
@@ -6870,6 +6932,13 @@ def render_quality_page() -> None:
             second_measurement, after_24h_measurement, quality_comment = render_print_quality_review_inputs(quality_defaults)
             post_process_review = second_measurement
             assembly_review = ""
+        if sample_row["process_type"] == "사출":
+            after_24h_detail = add_check_id_results(
+                parse_inspection_dict(after_24h_measurement),
+                inspection_plan,
+                timing="24h",
+            )
+            after_24h_measurement = json.dumps(after_24h_detail, ensure_ascii=False)
         (save_clicked,) = render_page_actions([("품질검토 저장", "save_quality_review", True)])
         if save_clicked:
             quality_payload: QualityReviewPayload = {
@@ -7057,6 +7126,32 @@ def render_final_page() -> None:
             if sample_row["drawing_receipt_status"] == "미입수" and approval_status == "확정":
                 st.error("도면 입수완료 전에는 최종 상태를 '확정'으로 저장할 수 없습니다.")
                 return
+            if approval_status == "확정":
+                experiment_date_value = sample_row.get("experiment_date")
+                checked_at_value = workflow_row.get("checked_at") if workflow_row is not None else None
+                experiment_completed = bool(
+                    (pd.notna(experiment_date_value) and str(experiment_date_value).strip())
+                    or (pd.notna(checked_at_value) and str(checked_at_value).strip())
+                )
+                quality_completed = bool(
+                    workflow_row is not None
+                    and pd.notna(workflow_row.get("quality_review_date"))
+                )
+                if not experiment_completed:
+                    st.error("실험 완료 전에는 최종 상태를 '확정'으로 저장할 수 없습니다.")
+                    return
+                if not quality_completed:
+                    st.error("품질검토 완료 전에는 최종 상태를 '확정'으로 저장할 수 없습니다.")
+                    return
+                inspection_plan = inspection_plan_from_details(instruction_detail, order_detail)
+                missing_results = required_result_issues(
+                    inspection_plan,
+                    parse_inspection_dict(workflow_row.get("first_measurement") if workflow_row is not None else ""),
+                    parse_inspection_dict(workflow_row.get("after_24h_measurement") if workflow_row is not None else ""),
+                )
+                if missing_results:
+                    st.error(f"필수 검사결과를 입력해 주세요: {', '.join(missing_results)}")
+                    return
             final_payload: FinalReviewPayload = {
                 "sample_id": sample_id,
                 "final_comment": final_comment,
@@ -7763,11 +7858,14 @@ def render_assembly_instruction_page() -> None:
                     "meta_requirement_id": int(selected_meta_id),
                 },
             }
-            _, instruction_code, mb_request_code = save_experiment_instruction(
+            saved_instruction = _save_instruction_safely(
                 selected_instruction_row,
                 payload=instruction_payload,
                 current_user_name=current_user()["user_name"],
             )
+            if saved_instruction is None:
+                return
+            _, instruction_code, mb_request_code = saved_instruction
             clear_instruction_return_state()
             success_message = f"조립 실험지시를 저장했습니다. 코드: {instruction_code}"
             if mb_request_code:

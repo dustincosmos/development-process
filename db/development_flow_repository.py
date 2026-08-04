@@ -24,6 +24,13 @@ from services.development_runtime_service import (
     upsert_mb_request_for_order,
     upsert_mold_dispatch_for_order,
 )
+from services.inspection_plan_service import (
+    apply_plan_defaults_to_instruction,
+    ensure_instruction_plan,
+    inspection_plan_from_details,
+    parse_dict as parse_inspection_dict,
+    requirement_plan,
+)
 from services.reference_data_service import get_document_revision_orders, get_items, get_mb_requests, get_mold_dispatch_orders
 from services.reference_data_service import (
     film_options_for_project,
@@ -512,21 +519,71 @@ def save_experiment_instruction(
     mb_request_code: str | None = None
     detail_payload = _normalize_dict_payload(payload["detail_payload"], field_name="지시 세부정보")
     required_sample_qty = _normalize_positive_int(payload["required_sample_qty"], field_name="필요 샘플 수")
-    detail_json = json.dumps(detail_payload, ensure_ascii=False)
     today_text = datetime.now().date().isoformat()
     order_meta_requirement_id = None
     order_meta_line_id = None
     with get_connection() as conn:
-        if selected_row is None:
-            order_row = conn.execute(
-                """
-                SELECT eo.order_code, eo.requirement_detail_json, eo.project_id, eo.item_id, eo.meta_requirement_id, eo.meta_line_id, i.item_code
-                FROM experiment_orders eo
-                LEFT JOIN items i ON i.item_id = eo.item_id
-                WHERE eo.experiment_order_id = ?
-                """,
+        order_row = conn.execute(
+            """
+            SELECT eo.order_code, eo.requirement_detail_json, eo.project_id, eo.item_id, eo.meta_requirement_id, eo.meta_line_id, i.item_code
+            FROM experiment_orders eo
+            LEFT JOIN items i ON i.item_id = eo.item_id
+            WHERE eo.experiment_order_id = ?
+            """,
+            (int(payload["experiment_order_id"]),),
+        ).fetchone()
+        if order_row is None:
+            raise ValueError("연결된 고객요구를 찾을 수 없습니다.")
+        if selected_row is not None:
+            linked_sample = conn.execute(
+                "SELECT sample_id FROM experiment_samples WHERE experiment_instruction_id = ? LIMIT 1",
+                (int(selected_row["experiment_instruction_id"]),),
+            ).fetchone()
+            if linked_sample is not None:
+                raise ValueError("이미 샘플이 생성된 지시는 수정할 수 없습니다. 새 지시 버전을 등록해 주세요.")
+        existing_detail = parse_inspection_dict(selected_row["instruction_detail_json"]) if selected_row is not None else {}
+        if selected_row is not None:
+            plan_version = int(existing_detail.get("plan_version") or 1)
+            if existing_detail.get("inspection_plan") and not detail_payload.get("inspection_plan"):
+                detail_payload["inspection_plan"] = existing_detail["inspection_plan"]
+            if existing_detail.get("inspection_plan_source"):
+                detail_payload["_inspection_plan_default_source"] = existing_detail["inspection_plan_source"]
+        else:
+            previous_instruction_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM experiment_instructions WHERE experiment_order_id = ?",
                 (int(payload["experiment_order_id"]),),
             ).fetchone()
+            plan_version = int(previous_instruction_count["cnt"] or 0) + 1
+        requirement_detail = parse_inspection_dict(order_row["requirement_detail_json"])
+        if selected_row is None and not requirement_plan(requirement_detail):
+            previous_instruction = conn.execute(
+                """
+                SELECT experiment_instruction_id, instruction_code, instruction_detail_json
+                FROM experiment_instructions
+                WHERE item_id = ?
+                ORDER BY experiment_instruction_id DESC
+                LIMIT 1
+                """,
+                (int(payload["item_id"]),),
+            ).fetchone()
+            if previous_instruction is not None:
+                previous_detail = parse_inspection_dict(previous_instruction["instruction_detail_json"])
+                previous_plan = inspection_plan_from_details(previous_detail)
+                detail_payload = apply_plan_defaults_to_instruction(
+                    detail_payload,
+                    previous_plan,
+                    source_instruction_id=int(previous_instruction["experiment_instruction_id"]),
+                    source_instruction_code=str(previous_instruction["instruction_code"] or ""),
+                )
+        detail_payload = ensure_instruction_plan(
+            detail_payload,
+            requirement_detail,
+            plan_version=plan_version,
+            source_order_id=int(payload["experiment_order_id"]),
+            source_order_code=str(order_row["order_code"] or ""),
+        )
+        detail_json = json.dumps(detail_payload, ensure_ascii=False)
+        if selected_row is None:
             base_code = str(order_row["order_code"]) if order_row is not None and order_row["order_code"] else "RQ-UNKNOWN"
             instruction_code = base_code.replace("RQ-", "IN-", 1) if base_code.startswith("RQ-") else f"IN-{base_code}"
             similar_count = conn.execute(
@@ -564,15 +621,6 @@ def save_experiment_instruction(
         else:
             instruction_id = int(selected_row["experiment_instruction_id"])
             instruction_code = str(selected_row["instruction_code"])
-            order_row = conn.execute(
-                """
-                SELECT eo.order_code, eo.requirement_detail_json, eo.project_id, eo.item_id, eo.meta_requirement_id, eo.meta_line_id, i.item_code
-                FROM experiment_orders eo
-                LEFT JOIN items i ON i.item_id = eo.item_id
-                WHERE eo.experiment_order_id = ?
-                """,
-                (int(payload["experiment_order_id"]),),
-            ).fetchone()
             conn.execute(
                 """
                 UPDATE experiment_instructions
@@ -1326,6 +1374,8 @@ def save_experiment_sample(
 ) -> int:
     process_type = payload["process_type"]
     order_detail = payload["order_detail"]
+    sample_detail = _normalize_dict_payload(payload["detail_payload"], field_name="샘플 지시 스냅샷")
+    sample_detail["inspection_plan_snapshot"] = inspection_plan_from_details(sample_detail, order_detail)
     if process_type == "사출" and order_detail.get("mold_dispatch_required") and linked_mold_dispatch_row is not None:
         execute(
             """
@@ -1368,7 +1418,7 @@ def save_experiment_sample(
         payload["customer_result"],
         payload["customer_result_notes"],
         json.dumps(payload["instruction_checks"], ensure_ascii=False),
-        json.dumps(payload["detail_payload"], ensure_ascii=False),
+        json.dumps(sample_detail, ensure_ascii=False),
     )
     if selected_row is None:
         existing_sample_row = None
@@ -1421,7 +1471,7 @@ def save_experiment_sample(
                         payload["customer_result"],
                         payload["customer_result_notes"],
                         json.dumps(payload["instruction_checks"], ensure_ascii=False),
-                        json.dumps(payload["detail_payload"], ensure_ascii=False),
+                        json.dumps(sample_detail, ensure_ascii=False),
                         current_user_name,
                         datetime.now().isoformat(timespec="seconds"),
                     ),
