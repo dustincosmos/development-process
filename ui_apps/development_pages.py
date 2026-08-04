@@ -127,19 +127,34 @@ def _save_instruction_safely(selected_row, *, payload, current_user_name):
         return None
 
 
-def _compact_tree_item_label(label: str) -> None:
+def _compact_tree_item_label(label: str, product_name: str = "") -> None:
     parts = str(label or "").split(" | ")
     first = parts[0] if parts else ""
     leading_spaces = len(first) - len(first.lstrip())
     item_code = first.strip()
     item_name = parts[1].strip() if len(parts) > 1 else ""
+    process_type = parts[2].strip() if len(parts) > 2 else ""
+    compact_name = item_name
+    normalized_product_name = str(product_name or "").strip()
+    if normalized_product_name and compact_name.startswith(normalized_product_name):
+        compact_name = compact_name[len(normalized_product_name):].strip(" -_|/")
+    if process_type and compact_name.endswith(process_type):
+        compact_name = compact_name[: -len(process_type)].strip(" -_|/")
+    compact_name = compact_name or item_name or "-"
     padding_left = min((leading_spaces // 3) * 8, 24)
-    tooltip = escape(" | ".join(value for value in (item_code, item_name) if value), quote=True)
+    tooltip = escape(" | ".join(value for value in (item_code, item_name, process_type) if value), quote=True)
+    process_badge = (
+        f'<span style="flex:0 0 auto;margin-left:5px;padding:1px 5px;border-radius:8px;background:#eef2f7;color:#4b5563;font-size:0.68rem;">{escape(process_type)}</span>'
+        if process_type else ""
+    )
     st.markdown(
         f"""
         <div title="{tooltip}" style="height:42px;min-width:0;padding-left:{padding_left}px;overflow:hidden;line-height:1.2;">
             <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(item_code)}</div>
-            <div style="font-size:0.76rem;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(item_name)}</div>
+            <div style="display:flex;align-items:center;min-width:0;font-size:0.76rem;color:#374151;">
+                <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(compact_name)}</span>
+                {process_badge}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2635,13 +2650,14 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             render_section_title("공정품 트리")
             tree_display_options = []
             root_tree_display_label = ""
+            selected_product_name = str(selected_product_row["product_name"] or "") if selected_product_row is not None and "product_name" in selected_product_row.index else ""
             if requirement_scope == "조립품" and root_item_id:
                 root_item_row = get_item_row(root_item_id)
                 root_item_code = str(root_item_row["item_code"] or "루트 조립품") if root_item_row is not None and "item_code" in root_item_row.keys() else "루트 조립품"
                 root_item_name = str(root_item_row["item_name"] or "") if root_item_row is not None and "item_name" in root_item_row.keys() else ""
                 if tree_mode == "조합" and active_meta_row is not None and "meta_code" in active_meta_row.keys() and active_meta_row["meta_code"]:
                     root_item_code = str(active_meta_row["meta_code"] or root_item_code)
-                root_tree_display_label = f"{root_item_code} | {root_item_name}"
+                root_tree_display_label = f"{root_item_code} | {root_item_name} | 조립"
             for label, iid in tree_items:
                 if " | " in label:
                     parts = label.split(" | ")
@@ -2651,7 +2667,11 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                         prefix = first[: len(first) - len(first.lstrip())]
                     item_code = first.strip()
                     item_name = parts[1].strip() if len(parts) > 1 else ""
-                    tree_display_options.append((f"{prefix}{item_code} | {item_name}", iid))
+                    process_type = parts[2].strip() if len(parts) > 2 else ""
+                    if not process_type:
+                        display_item_row = get_item_row(iid)
+                        process_type = infer_process_type_from_item(display_item_row)
+                    tree_display_options.append((f"{prefix}{item_code} | {item_name} | {process_type}", iid))
                 else:
                     tree_display_options.append((label, iid))
             selected_item_label = ""
@@ -2757,7 +2777,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                             disabled=True,
                         )
                     with root_c2:
-                        _compact_tree_item_label(root_tree_display_label)
+                        _compact_tree_item_label(root_tree_display_label, selected_product_name)
                     with root_c3:
                         st.caption(root_status_text)
                     with root_c4:
@@ -2791,7 +2811,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                     else:
                         status_text = ""
                     with row_c2:
-                        _compact_tree_item_label(label)
+                        _compact_tree_item_label(label, selected_product_name)
                     with row_c3:
                         st.caption(status_text)
                     with row_c4:
