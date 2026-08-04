@@ -179,6 +179,7 @@ def rebuild_sample_review_tables_if_needed(conn: sqlite3.Connection) -> None:
         "sample_quality_reviews": """
             CREATE TABLE sample_quality_reviews (
                 sample_id INTEGER PRIMARY KEY,
+                quality_review_date TEXT,
                 second_measurement TEXT,
                 after_24h_measurement TEXT,
                 post_process_review TEXT,
@@ -192,6 +193,7 @@ def rebuild_sample_review_tables_if_needed(conn: sqlite3.Connection) -> None:
         "sample_final_reviews": """
             CREATE TABLE sample_final_reviews (
                 sample_id INTEGER PRIMARY KEY,
+                final_review_date TEXT,
                 final_comment TEXT,
                 final_action TEXT,
                 approval_status TEXT NOT NULL DEFAULT '검토중',
@@ -212,8 +214,16 @@ def rebuild_sample_review_tables_if_needed(conn: sqlite3.Connection) -> None:
     for table_name in tables_to_rebuild:
         conn.execute(f"ALTER TABLE {table_name} RENAME TO {table_name}_old")
         conn.execute(targets[table_name])
-        column_names = [row["name"] for row in conn.execute(f"PRAGMA table_info({table_name}_old)").fetchall()]
-        select_columns = ", ".join(column_names)
+        old_columns = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table_name}_old)").fetchall()
+        }
+        new_columns = [
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        ]
+        column_names = [column for column in new_columns if column in old_columns]
+        select_columns = ", ".join(f'"{column}"' for column in column_names)
         conn.execute(f"INSERT INTO {table_name} ({select_columns}) SELECT {select_columns} FROM {table_name}_old")
         conn.execute(f"DROP TABLE {table_name}_old")
     conn.execute("PRAGMA foreign_keys = ON")
