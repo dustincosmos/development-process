@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from html import escape
 from pathlib import Path
 
@@ -127,6 +128,33 @@ def _save_instruction_safely(selected_row, *, payload, current_user_name):
         return None
 
 
+def _compact_item_name(item_name: str, product_name: str, process_type: str) -> str:
+    compact_name = str(item_name or "").strip()
+    normalized_product_name = str(product_name or "").strip()
+    if normalized_product_name and compact_name.startswith(normalized_product_name):
+        compact_name = compact_name[len(normalized_product_name):]
+    elif normalized_product_name:
+        common_length = 0
+        for product_char, item_char in zip(normalized_product_name, compact_name):
+            if product_char != item_char:
+                break
+            common_length += 1
+        common_prefix = compact_name[:common_length]
+        boundary = max(common_prefix.rfind(" "), common_prefix.rfind("_"))
+        if boundary >= 4:
+            compact_name = compact_name[boundary + 1:]
+    compact_name = compact_name.strip(" -_|/(")
+    previous_name = None
+    while compact_name != previous_name:
+        previous_name = compact_name
+        compact_name = re.sub(r"^\(?\d{2}\s*(?:AD|NEW)\)?[\s_\-]*", "", compact_name, flags=re.IGNORECASE)
+        compact_name = re.sub(r"^(?:암호|EUSA)[\s_\-]*", "", compact_name, flags=re.IGNORECASE)
+    if process_type and compact_name.endswith(process_type):
+        compact_name = compact_name[: -len(process_type)]
+    compact_name = re.sub(r"\s+(?:사출|인쇄|코팅|증착|도장|후가공|조립)$", "", compact_name).strip()
+    return compact_name.strip(" -_|/") or str(item_name or "").strip() or "-"
+
+
 def _compact_tree_item_label(label: str, product_name: str = "") -> None:
     parts = str(label or "").split(" | ")
     first = parts[0] if parts else ""
@@ -134,13 +162,7 @@ def _compact_tree_item_label(label: str, product_name: str = "") -> None:
     item_code = first.strip()
     item_name = parts[1].strip() if len(parts) > 1 else ""
     process_type = parts[2].strip() if len(parts) > 2 else ""
-    compact_name = item_name
-    normalized_product_name = str(product_name or "").strip()
-    if normalized_product_name and compact_name.startswith(normalized_product_name):
-        compact_name = compact_name[len(normalized_product_name):].strip(" -_|/")
-    if process_type and compact_name.endswith(process_type):
-        compact_name = compact_name[: -len(process_type)].strip(" -_|/")
-    compact_name = compact_name or item_name or "-"
+    compact_name = _compact_item_name(item_name, product_name, process_type)
     padding_left = min((leading_spaces // 3) * 8, 24)
     tooltip = escape(" | ".join(value for value in (item_code, item_name, process_type) if value), quote=True)
     process_badge = (
@@ -149,10 +171,10 @@ def _compact_tree_item_label(label: str, product_name: str = "") -> None:
     )
     st.markdown(
         f"""
-        <div title="{tooltip}" style="height:42px;min-width:0;padding-left:{padding_left}px;overflow:hidden;line-height:1.2;">
+        <div title="{tooltip}" style="min-height:42px;min-width:0;padding-left:{padding_left}px;line-height:1.2;">
             <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(item_code)}</div>
-            <div style="display:flex;align-items:center;min-width:0;font-size:0.76rem;color:#374151;">
-                <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(compact_name)}</span>
+            <div style="display:flex;align-items:flex-start;min-width:0;font-size:0.76rem;color:#374151;">
+                <span style="min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:keep-all;">{escape(compact_name)}</span>
                 {process_badge}
             </div>
         </div>
