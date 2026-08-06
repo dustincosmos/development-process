@@ -75,6 +75,7 @@ from services.inspection_plan_service import (
     apply_previous_quality_defaults,
     inspection_plan_from_details,
     parse_dict as parse_inspection_dict,
+    quality_defaults_from_requirement,
     required_result_issues,
 )
 from services.reference_data_service import get_item_bom, get_mold_drawings, get_molds, get_print_films, get_products
@@ -3036,22 +3037,44 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                 linked_existing_order_row = linked_existing_match.iloc[0]
 
         selected_detail = parse_json_text(selected_row["requirement_detail_json"]) if selected_row is not None else {}
+        previous_quality_source_order_id = None
         if selected_row is None and selected_item_id and not df.empty:
             previous_requirement_rows = df[
-                (pd.to_numeric(df["item_id"], errors="coerce") == int(selected_item_id))
-                & (df["status"].astype(str) == "완료")
+                (df["project_code"].astype(str) == str(project_code))
+                & (pd.to_numeric(df["item_id"], errors="coerce") == int(selected_item_id))
+                & (df["status"].astype(str) != "취소")
             ].sort_values("experiment_order_id", ascending=False)
-            if not previous_requirement_rows.empty:
-                previous_requirement_row = previous_requirement_rows.iloc[0]
-                previous_requirement_detail = parse_json_text(previous_requirement_row["requirement_detail_json"])
+            previous_requirement_row = None
+            previous_requirement_detail = {}
+            for _, candidate_row in previous_requirement_rows.iterrows():
+                candidate_detail = parse_json_text(candidate_row["requirement_detail_json"])
+                candidate_product_id = candidate_detail.get("_meta_product_id")
+                if (
+                    selected_product_id
+                    and candidate_product_id not in (None, "")
+                    and _safe_int_value(candidate_product_id, 0) != int(selected_product_id)
+                ):
+                    continue
+                candidate_quality_defaults = quality_defaults_from_requirement(candidate_detail)
+                has_dimension_default = any(
+                    candidate_quality_defaults.get(f"spec_location_{idx}")
+                    or candidate_quality_defaults.get(f"spec_value_{idx}")
+                    for idx in range(1, 5)
+                )
+                if has_dimension_default:
+                    previous_requirement_row = candidate_row
+                    previous_requirement_detail = candidate_detail
+                    break
+            if previous_requirement_row is not None:
                 selected_detail = apply_previous_quality_defaults(
                     selected_detail,
                     previous_requirement_detail,
                     source_order_id=int(previous_requirement_row["experiment_order_id"]),
                     source_order_code=str(previous_requirement_row["order_code"]),
                 )
+                previous_quality_source_order_id = int(previous_requirement_row["experiment_order_id"])
                 if any(selected_detail.get(f"spec_location_{idx}") or selected_detail.get(f"spec_value_{idx}") for idx in range(1, 5)):
-                    st.info(f"이전 완료 요구의 품질기준을 기본값으로 불러왔습니다. 출처: {previous_requirement_row['order_code']}")
+                    st.info(f"직전 유효 요구의 품질기준을 기본값으로 불러왔습니다. 출처: {previous_requirement_row['order_code']}")
         root_meta_df = (
             df[(df["project_code"] == project_code) & (df["item_id"] == int(root_item_id))].copy()
             if project_code and root_item_id
@@ -3190,7 +3213,15 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                 for _, row in item_samples_df.iterrows()
             ]
         child_items_df = bom_df[bom_df["parent_item_id"] == selected_item_id].copy() if selected_item_id and not bom_df.empty else bom_df.iloc[0:0]
-        spec_key_suffix = str(int(selected_row["experiment_order_id"])) if selected_row is not None else (str(selected_item_id) if selected_item_id else "new")
+        spec_key_suffix = (
+            str(int(selected_row["experiment_order_id"]))
+            if selected_row is not None
+            else (
+                f"{selected_item_id}_from_{previous_quality_source_order_id or 'base'}"
+                if selected_item_id
+                else "new"
+            )
+        )
         req_key_prefix = f"{selection_scope}_{spec_key_suffix}"
 
         color_required = False
