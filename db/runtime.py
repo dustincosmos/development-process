@@ -71,6 +71,8 @@ def rebuild_print_films_table_if_needed(conn: sqlite3.Connection) -> None:
             break
     if not has_unique_film_code:
         return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
     conn.executescript(
         """
         ALTER TABLE print_films RENAME TO print_films_old;
@@ -103,6 +105,8 @@ def rebuild_print_films_table_if_needed(conn: sqlite3.Connection) -> None:
         DROP TABLE print_films_old;
         """
     )
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def rebuild_experiment_samples_table_if_needed(conn: sqlite3.Connection) -> None:
