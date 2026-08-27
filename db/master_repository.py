@@ -238,6 +238,27 @@ def delete_bom(bom_id: int) -> tuple[bool, str]:
 
 
 def save_bom(selected_bom_id: int | None, payload: BomPayload, current_user_name: str) -> None:
+    parent_item_id = int(payload["parent_item_id"])
+    child_item_id = int(payload["child_item_id"])
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT bom_id, parent_item_id, child_item_id FROM item_bom"
+        ).fetchall()
+    children_by_parent: dict[int, set[int]] = {}
+    for row in rows:
+        if selected_bom_id is not None and int(row["bom_id"]) == int(selected_bom_id):
+            continue
+        children_by_parent.setdefault(int(row["parent_item_id"]), set()).add(int(row["child_item_id"]))
+    pending = [child_item_id]
+    visited: set[int] = set()
+    while pending:
+        current_id = pending.pop()
+        if current_id == parent_item_id:
+            raise ValueError("순환하는 BOM 구조는 등록할 수 없습니다.")
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        pending.extend(children_by_parent.get(current_id, set()))
     if selected_bom_id is None:
         execute(
             """

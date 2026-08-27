@@ -355,7 +355,7 @@ def get_item_bom() -> pd.DataFrame:
 def get_experiment_orders() -> pd.DataFrame:
     return query_df(
         """
-        SELECT eo.experiment_order_id, eo.meta_requirement_id, eo.meta_line_id, eo.project_id, eo.order_code, p.project_code, i.item_id, i.item_code, i.item_name,
+        SELECT eo.experiment_order_id, eo.meta_requirement_id, eo.meta_line_id, eo.project_id, eo.product_id, eo.order_code, p.project_code, i.item_id, i.item_code, i.item_name,
                eo.process_type, eo.requirement_date, eo.milestone_name, eo.base_drawing_revision, eo.drawing_receipt_status, eo.mold_pre_update, eo.mold_dispatch_required,
                eo.target_due_date, eo.milestone_due_date,
                eo.required_sample_qty, eo.experiment_goal, eo.success_criteria,
@@ -373,7 +373,7 @@ def get_experiment_orders() -> pd.DataFrame:
 def get_experiment_samples() -> pd.DataFrame:
     return query_df(
         """
-        SELECT s.sample_id, s.experiment_instruction_id, ei.instruction_code, eo.order_code, p.project_code, i.item_code, i.item_name, s.sample_code,
+        SELECT s.sample_id, s.experiment_instruction_id, ei.instruction_code, eo.order_code, eo.product_id, p.project_code, i.item_code, i.item_name, s.sample_code,
                s.sample_seq, s.sample_name, s.experiment_date, s.variation_note, s.used_mold_id, s.used_film_id,
                m.mold_code, f.film_code, mr.request_code AS mb_request_code,
                s.status,
@@ -398,7 +398,7 @@ def get_experiment_samples() -> pd.DataFrame:
 def get_sample_workflow() -> pd.DataFrame:
     return query_df(
         """
-        SELECT s.sample_id, s.experiment_instruction_id, ei.instruction_code, s.sample_code, eo.order_code, p.project_code, i.item_name, eo.process_type, eo.item_id,
+        SELECT s.sample_id, s.experiment_instruction_id, ei.instruction_code, s.sample_code, eo.order_code, eo.product_id, p.project_code, i.item_name, eo.process_type, eo.item_id,
                s.status, eo.requirement_date, ei.instruction_date, s.experiment_date, eo.milestone_name, eo.target_due_date,
                eo.base_drawing_revision, eo.drawing_receipt_status, eo.mold_pre_update,
                s.customer_delivery_date, s.customer_result_date, s.customer_result, s.customer_result_notes,
@@ -528,12 +528,37 @@ def project_item_tree_options(project_code: str, product_id: int | None = None) 
     bom_df = get_item_bom()
     if items_df.empty or not project_code:
         return []
-    project_items = items_df[items_df["project_code"] == project_code].copy()
-    if product_id:
-        project_items = project_items[pd.to_numeric(project_items["product_id"], errors="coerce") == int(product_id)].copy()
-    if project_items.empty:
-        return []
-    project_bom = bom_df[bom_df["project_code"] == project_code].copy() if not bom_df.empty else bom_df.iloc[0:0]
+    products_df = get_products()
+    selected_product = (
+        products_df[
+            (pd.to_numeric(products_df["product_id"], errors="coerce") == int(product_id))
+            & (products_df["project_code"].astype(str) == str(project_code))
+        ]
+        if product_id and not products_df.empty
+        else products_df.iloc[0:0]
+    )
+    root_item_id = None
+    if not selected_product.empty:
+        root_value = selected_product.iloc[0].get("root_item_id")
+        if pd.isna(root_value):
+            root_value = selected_product.iloc[0].get("linked_item_id")
+        if pd.notna(root_value):
+            root_item_id = int(root_value)
+
+    # 기존 상품 중 루트 공정품이 아직 지정되지 않은 데이터는 종전 product_id
+    # 연결을 사용해 표시하고, 루트가 지정된 상품은 BOM만을 구성 기준으로 삼습니다.
+    if root_item_id is None:
+        legacy_items = items_df[items_df["project_code"] == project_code].copy()
+        if product_id:
+            legacy_items = legacy_items[
+                pd.to_numeric(legacy_items["product_id"], errors="coerce") == int(product_id)
+            ].copy()
+        return [
+            (f"{row['item_code']} | {row['item_name']} | {row['process_type'] or '-'}", int(row["item_id"]))
+            for _, row in legacy_items.sort_values(["item_code", "item_name"]).iterrows()
+        ]
+
+    project_items = items_df.copy()
     item_map = {
         int(row["item_id"]): {
             "item_code": row["item_code"],
@@ -543,17 +568,13 @@ def project_item_tree_options(project_code: str, product_id: int | None = None) 
         for _, row in project_items.iterrows()
     }
     children_map: dict[int, list[int]] = {}
-    child_ids: set[int] = set()
-    if not project_bom.empty:
-        project_item_ids = set(item_map.keys())
-        item_code_to_id = {int(row["item_id"]): row["item_code"] for _, row in project_items.iterrows()}
-        code_to_id = {code: item_id for item_id, code in item_code_to_id.items()}
-        for _, row in project_bom.iterrows():
-            parent_id = code_to_id.get(row["parent_item_code"])
-            child_id = code_to_id.get(row["child_item_code"])
-            if parent_id in project_item_ids and child_id in project_item_ids and parent_id is not None and child_id is not None:
+    if not bom_df.empty:
+        item_ids = set(item_map.keys())
+        for _, row in bom_df.iterrows():
+            parent_id = int(row["parent_item_id"])
+            child_id = int(row["child_item_id"])
+            if parent_id in item_ids and child_id in item_ids:
                 children_map.setdefault(parent_id, []).append(child_id)
-                child_ids.add(child_id)
 
     def sort_ids(ids: list[int]) -> list[int]:
         return sorted(ids, key=lambda item_id: (item_map[item_id]["item_code"], item_map[item_id]["item_name"]))
@@ -572,11 +593,8 @@ def project_item_tree_options(project_code: str, product_id: int | None = None) 
         for child_id in sort_ids(children_map.get(item_id, [])):
             walk(child_id, depth + 1)
 
-    root_ids = [item_id for item_id in item_map if item_id not in child_ids]
-    for root_id in sort_ids(root_ids):
-        walk(root_id, 0)
-    for item_id in sort_ids(list(item_map.keys())):
-        walk(item_id, 0)
+    if root_item_id in item_map:
+        walk(root_item_id, 0)
     return ordered
 
 

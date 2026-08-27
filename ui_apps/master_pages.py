@@ -268,14 +268,14 @@ def render_products_page() -> None:
             selected_row = project_products_df[project_products_df.apply(lambda row: f"{row['product_code']} | {row['product_name']}", axis=1) == selected_label].iloc[0]
         with pick_c3:
             st.text_input("등록 모드", value="신규 등록" if selected_row is None else "기존 수정", disabled=True, key="product_mode")
-        project_items_df = items_df[items_df["project_code"] == selected_project_code] if selected_project_code else items_df.iloc[0:0]
-        root_choices = [""] + project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1).tolist() if not project_items_df.empty else [""]
+        root_items_df = items_df.sort_values(["item_code", "item_name"]).copy() if not items_df.empty else items_df.iloc[0:0]
+        root_choices = [""] + root_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1).tolist() if not root_items_df.empty else [""]
         selected_root_label = ""
         linked_item_value = None
         if selected_row is not None:
             linked_item_value = selected_row["linked_item_id"] if "linked_item_id" in selected_row.index and pd.notna(selected_row["linked_item_id"]) else selected_row["root_item_id"]
         if linked_item_value is not None and pd.notna(linked_item_value):
-            match = project_items_df[project_items_df["item_id"] == int(linked_item_value)]
+            match = root_items_df[root_items_df["item_id"] == int(linked_item_value)]
             if not match.empty:
                 selected_root_label = f"{match.iloc[0]['item_code']} | {match.iloc[0]['item_name']}"
         with st.container(border=True):
@@ -311,7 +311,7 @@ def render_products_page() -> None:
                     st.error("상품코드는 중복될 수 없습니다.")
                 else:
                     matched_root = (
-                        project_items_df[project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == root_item_label].iloc[0]
+                        root_items_df[root_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == root_item_label].iloc[0]
                         if root_item_label
                         else None
                     )
@@ -338,30 +338,26 @@ def render_items_page() -> None:
     st.subheader(page_name)
     show_permission_hint(page_name)
     projects = project_options()
-    products = product_options()
     items_df = get_items()
     selected_project_code = ""
     project_items_df = items_df.iloc[0:0]
     if can_edit(page_name):
         pick_c1, pick_c2, pick_c3, pick_c4 = st.columns([1, 1.2, 1.2, 0.8])
         with pick_c1:
-            selected_project_label = st.selectbox("프로젝트", options=[""] + [label for label, _ in projects], key="item_project_label")
+            selected_project_label = st.selectbox("기준 프로젝트(선택)", options=[""] + [label for label, _ in projects], key="item_project_label")
         selected_project_code = selected_project_label.split(" | ")[0] if selected_project_label else ""
-        project_products = [pair for pair in products if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
         with pick_c2:
-            selected_product_label = st.selectbox("상품", options=[""] + [label for label, _ in project_products], key="item_product_label")
-        selected_product_code = selected_product_label.split(" | ")[1] if selected_product_label else ""
-        project_items_df = items_df[(items_df["project_code"] == selected_project_code) & ((items_df["product_code"] == selected_product_code) if selected_product_code else True)] if selected_project_code else items_df.iloc[0:0]
+            st.text_input("등록 방식", value="독립 공정품 마스터", disabled=True, key="item_registration_mode")
+        project_items_df = items_df.sort_values(["item_code", "item_name"]).copy() if not items_df.empty else items_df.iloc[0:0]
         selected_row = None
         selected_label = "신규 등록"
-        if selected_project_code:
-            labels = ["신규 등록"]
-            if not project_items_df.empty:
-                labels += project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1).tolist()
-            with pick_c3:
-                selected_label = st.selectbox("공정품 선택", options=labels, key="item_pick_label")
-            if selected_label != "신규 등록":
-                selected_row = project_items_df[project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == selected_label].iloc[0]
+        labels = ["신규 등록"]
+        if not project_items_df.empty:
+            labels += project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1).tolist()
+        with pick_c3:
+            selected_label = st.selectbox("공정품 선택", options=labels, key="item_pick_label")
+        if selected_label != "신규 등록":
+            selected_row = project_items_df[project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == selected_label].iloc[0]
         project_drawings = [pair for pair in product_drawing_options() if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
         project_molds = [pair for pair in mold_options() if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
         project_films = film_options_for_project(selected_project_code) if selected_project_code else []
@@ -458,8 +454,6 @@ def render_items_page() -> None:
                     duplicate = duplicate[duplicate["item_id"] != selected_row["item_id"]]
                 if not item_code.strip() or not item_name.strip():
                     st.error("공정품 코드와 공정품명을 입력해 주세요.")
-                elif not selected_product_label:
-                    st.error("상품을 선택해 주세요.")
                 elif not process_type:
                     st.error("공정을 선택해 주세요.")
                 elif not duplicate.empty:
@@ -467,6 +461,14 @@ def render_items_page() -> None:
                 else:
                     selected_drawing_id = dict(project_drawings).get(drawing_label)
                     selected_film_id = dict(project_films).get(film_label)
+                    selected_mold_id = dict(project_molds).get(mold_label)
+                    if selected_row is not None:
+                        if selected_drawing_id is None and pd.notna(selected_row.get("product_drawing_id")):
+                            selected_drawing_id = int(selected_row["product_drawing_id"])
+                        if selected_film_id is None and pd.notna(selected_row.get("base_print_film_id")):
+                            selected_film_id = int(selected_row["base_print_film_id"])
+                        if selected_mold_id is None and pd.notna(selected_row.get("primary_mold_id")):
+                            selected_mold_id = int(selected_row["primary_mold_id"])
                     matched_drawing = drawings_df[drawings_df["product_drawing_id"] == int(selected_drawing_id)] if selected_drawing_id and not drawings_df.empty else drawings_df.iloc[0:0]
                     matched_film = films_df[films_df["print_film_id"] == int(selected_film_id)] if selected_film_id and not films_df.empty else films_df.iloc[0:0]
                     if process_type == "인쇄":
@@ -476,8 +478,8 @@ def render_items_page() -> None:
                     master_service.save_item(
                         int(selected_row["item_id"]) if selected_row is not None else None,
                         {
-                            "project_id": dict(projects).get(selected_project_label),
-                            "product_id": dict(project_products).get(selected_product_label),
+                            "project_id": None,
+                            "product_id": None,
                             "item_code": item_code,
                             "item_name": item_name,
                             "item_class": ITEM_CLASSES[0],
@@ -485,7 +487,7 @@ def render_items_page() -> None:
                             "process_type": process_type,
                             "product_drawing_id": selected_drawing_id,
                             "base_print_film_id": selected_film_id,
-                            "primary_mold_id": dict(project_molds).get(mold_label),
+                            "primary_mold_id": selected_mold_id,
                             "base_revision_no": base_revision_no.strip(),
                             "base_material_label": base_material_label.strip(),
                             "base_color_label": base_color_label.strip(),
@@ -496,7 +498,7 @@ def render_items_page() -> None:
                     )
                     flash_success("공정품을 저장했습니다." if selected_row is None else "공정품을 수정했습니다.")
                     st.rerun()
-    history_df = project_items_df if can_edit(page_name) and selected_project_code else items_df
+    history_df = project_items_df if can_edit(page_name) else items_df
     if not history_df.empty:
         render_history_panel("이력 보기", history_df)
 
@@ -528,7 +530,9 @@ def render_bom_page() -> None:
                 selected_row = project_df[project_df.apply(lambda row: f"{row['parent_item_code']} -> {row['child_item_code']}", axis=1) == selected_label].iloc[0]
         with pick_c3:
             st.text_input("등록 모드", value="신규 등록" if selected_row is None else "기존 수정", disabled=True, key="bom_mode")
-        project_items = [pair for pair in items if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
+        # BOM은 상품 루트에서 공정품 마스터를 연결하므로 다른 프로젝트에서
+        # 최초 등록한 공용 공정품도 하위 공정품으로 선택할 수 있습니다.
+        project_items = items if selected_project_code else []
         selected_parent_label = next((label for label, _ in project_items if selected_row is not None and f"| {selected_row['parent_item_code']} |" in label), "") if selected_row is not None else ""
         selected_child_label = next((label for label, _ in project_items if selected_row is not None and f"| {selected_row['child_item_code']} |" in label), "") if selected_row is not None else ""
         with st.container(border=True):
@@ -544,7 +548,7 @@ def render_bom_page() -> None:
             with c2:
                 qty_unit = st.text_input("수량 단위", value=selected_row["qty_unit"] if selected_row is not None and pd.notna(selected_row["qty_unit"]) else "ea")
             with c3:
-                st.text_input("연결 형태", value="상위 공정품 -> 하위 공정품", disabled=True)
+                st.text_input("연결 형태", value="상위 공정품 -> 하위 공정품(공용 가능)", disabled=True)
             notes = st.text_area("비고", height=88, value=selected_row["notes"] if selected_row is not None and pd.notna(selected_row["notes"]) else "")
             save_clicked, delete_clicked = render_page_actions(
                 [
@@ -566,18 +570,22 @@ def render_bom_page() -> None:
                 elif parent_id == child_id:
                     st.error("상위 공정품과 하위 공정품은 같을 수 없습니다.")
                 else:
-                    master_service.save_bom(
-                        int(selected_row["bom_id"]) if selected_row is not None else None,
-                        {
-                            "project_id": dict(projects).get(selected_project_label),
-                            "parent_item_id": parent_id,
-                            "child_item_id": child_id,
-                            "qty": qty,
-                            "qty_unit": qty_unit,
-                            "notes": notes,
-                        },
-                        current_user()["user_name"],
-                    )
+                    try:
+                        master_service.save_bom(
+                            int(selected_row["bom_id"]) if selected_row is not None else None,
+                            {
+                                "project_id": dict(projects).get(selected_project_label),
+                                "parent_item_id": parent_id,
+                                "child_item_id": child_id,
+                                "qty": qty,
+                                "qty_unit": qty_unit,
+                                "notes": notes,
+                            },
+                            current_user()["user_name"],
+                        )
+                    except ValueError as exc:
+                        st.error(str(exc))
+                        return
                     flash_success("제품구성을 저장했습니다." if selected_row is None else "제품구성을 수정했습니다.")
                     st.rerun()
     history_df = project_df if can_edit(page_name) and selected_project_code else df

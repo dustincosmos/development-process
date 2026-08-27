@@ -384,7 +384,7 @@ def list_experiment_instructions() -> pd.DataFrame:
     with get_connection() as conn:
         return pd.read_sql_query(
             """
-            SELECT ei.*, eo.order_code, eo.target_due_date, eo.milestone_name,
+            SELECT ei.*, eo.order_code, eo.product_id, eo.target_due_date, eo.milestone_name,
                    it.item_code, it.item_name, dp.project_code, dp.product_name AS project_product_name
             FROM experiment_instructions ei
             JOIN experiment_orders eo ON eo.experiment_order_id = ei.experiment_order_id
@@ -1142,6 +1142,7 @@ def save_experiment_order(
     current_user_name: str,
 ) -> tuple[int, str, int | None]:
     project_id = payload["project_id"]
+    product_id = payload.get("product_id")
     item_id = payload["item_id"]
     item_code = payload["item_code"]
     process_type = payload["process_type"]
@@ -1214,18 +1215,19 @@ def save_experiment_order(
             cur = conn.execute(
                 """
                 INSERT INTO experiment_orders (
-                    order_code, meta_requirement_id, meta_line_id, project_id, item_id, process_type, milestone_name, base_drawing_revision,
+                    order_code, meta_requirement_id, meta_line_id, project_id, product_id, item_id, process_type, milestone_name, base_drawing_revision,
                     drawing_receipt_status, mold_pre_update, mold_dispatch_required, target_due_date, requirement_date,
                     milestone_due_date, required_sample_qty, experiment_goal, success_criteria,
                     request_notes, requirement_checks_json, requirement_detail_json,
                     requested_by, status, created_by, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '진행중', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '진행중', ?, ?)
                 """,
                 (
                     order_code,
                     meta_requirement_id,
                     meta_line_id,
                     project_id,
+                    int(product_id) if product_id else None,
                     item_id,
                     process_type,
                     payload["milestone_name"],
@@ -1255,7 +1257,7 @@ def save_experiment_order(
             conn.execute(
                 """
                 UPDATE experiment_orders
-                SET meta_requirement_id = ?, meta_line_id = ?, project_id = ?, item_id = ?, process_type = ?, milestone_name = ?, base_drawing_revision = ?,
+                SET meta_requirement_id = ?, meta_line_id = ?, project_id = ?, product_id = ?, item_id = ?, process_type = ?, milestone_name = ?, base_drawing_revision = ?,
                     drawing_receipt_status = ?, mold_pre_update = ?, mold_dispatch_required = ?, target_due_date = ?,
                     milestone_due_date = ?, required_sample_qty = ?, experiment_goal = ?, success_criteria = ?,
                     request_notes = ?, requirement_checks_json = ?, requirement_detail_json = ?, requested_by = ?, status = '진행중',
@@ -1266,6 +1268,7 @@ def save_experiment_order(
                     meta_requirement_id,
                     meta_line_id,
                     project_id,
+                    int(product_id) if product_id else None,
                     item_id,
                     process_type,
                     payload["milestone_name"],

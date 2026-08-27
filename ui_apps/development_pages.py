@@ -205,6 +205,22 @@ def _safe_int_value(value, default: int = 0) -> int:
         return default
 
 
+def _filter_orders_for_product(df: pd.DataFrame, product_id: int | None) -> pd.DataFrame:
+    if df.empty or not product_id:
+        return df
+
+    def matches(row: pd.Series) -> bool:
+        explicit_product_id = row.get("product_id")
+        if pd.notna(explicit_product_id):
+            return int(explicit_product_id) == int(product_id)
+        detail = parse_json_text(row.get("requirement_detail_json"))
+        legacy_product_id = detail.get("_meta_product_id")
+        # 상품 문맥 저장 전의 기존 요구는 조회 호환을 위해 포함합니다.
+        return legacy_product_id in (None, "") or _safe_int_value(legacy_product_id, 0) == int(product_id)
+
+    return df[df.apply(matches, axis=1)].copy()
+
+
 def _candidate_mold_options_for_item(
     selected_item_row: pd.Series | None,
     project_molds: list[tuple[str, int]],
@@ -2941,6 +2957,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             and selected_meta_line_row is None
         )
         filtered_df = df[(df["project_code"] == project_code) & (df["item_id"] == selected_item_id)].copy() if project_code and selected_item_id else df.iloc[0:0]
+        filtered_df = _filter_orders_for_product(filtered_df, selected_product_id)
         if active_meta_id and not filtered_df.empty and "meta_requirement_id" in filtered_df.columns:
             filtered_df = filtered_df[filtered_df["meta_requirement_id"] == int(active_meta_id)].copy()
         is_existing_meta_edit_mode = bool(
@@ -3044,6 +3061,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
                 & (pd.to_numeric(df["item_id"], errors="coerce") == int(selected_item_id))
                 & (df["status"].astype(str) != "취소")
             ].sort_values("experiment_order_id", ascending=False)
+            previous_requirement_rows = _filter_orders_for_product(previous_requirement_rows, selected_product_id)
             previous_requirement_row = None
             previous_requirement_detail = {}
             for _, candidate_row in previous_requirement_rows.iterrows():
@@ -3080,6 +3098,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             if project_code and root_item_id
             else df.iloc[0:0]
         )
+        root_meta_df = _filter_orders_for_product(root_meta_df, selected_product_id)
         if active_meta_id and not root_meta_df.empty and "meta_requirement_id" in root_meta_df.columns:
             root_meta_df = root_meta_df[root_meta_df["meta_requirement_id"] == int(active_meta_id)].copy()
         root_meta_row = root_meta_df.iloc[-1] if not root_meta_df.empty else None
@@ -3986,6 +4005,7 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             requirement_checks = derive_requirement_checks(process_type, detail_payload)
             order_payload: ExperimentOrderPayload = {
                 "project_id": dict(projects).get(project_label),
+                "product_id": int(selected_product_id) if selected_product_id else None,
                 "item_id": selected_item_id,
                 "item_code": item_code,
                 "process_type": process_type,

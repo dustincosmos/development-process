@@ -119,6 +119,7 @@ class RequirementDetailPayload(TypedDict, total=False):
 
 class ExperimentOrderPayload(TypedDict):
     project_id: int
+    product_id: int | None
     item_id: int
     item_code: str
     process_type: str

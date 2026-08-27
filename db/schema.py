@@ -411,6 +411,7 @@ def init_db() -> None:
                 order_code TEXT NOT NULL UNIQUE,
                 meta_requirement_id INTEGER,
                 project_id INTEGER NOT NULL,
+                product_id INTEGER,
                 item_id INTEGER NOT NULL,
                 process_type TEXT NOT NULL,
                 requirement_date TEXT,
@@ -432,6 +433,7 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(meta_requirement_id) REFERENCES meta_requirements(meta_requirement_id),
                 FOREIGN KEY(project_id) REFERENCES development_projects(project_id),
+                FOREIGN KEY(product_id) REFERENCES products(product_id),
                 FOREIGN KEY(item_id) REFERENCES items(item_id)
             );
 
@@ -672,6 +674,7 @@ def init_db() -> None:
         add_column_if_missing(conn, "print_films", "is_current", "INTEGER NOT NULL DEFAULT 1")
         add_column_if_missing(conn, "print_films", "artwork_type", "TEXT NOT NULL DEFAULT '인쇄'")
         add_column_if_missing(conn, "experiment_orders", "requirement_date", "TEXT")
+        add_column_if_missing(conn, "experiment_orders", "product_id", "INTEGER")
         add_column_if_missing(conn, "experiment_instructions", "instruction_date", "TEXT")
         add_column_if_missing(conn, "experiment_samples", "experiment_date", "TEXT")
         add_column_if_missing(conn, "sample_quality_reviews", "quality_review_date", "TEXT")
@@ -826,6 +829,29 @@ def init_db() -> None:
                     (product_id, project_id),
                 )
         conn.execute("UPDATE products SET linked_item_id = root_item_id WHERE linked_item_id IS NULL")
+        conn.execute(
+            """
+            UPDATE experiment_orders
+            SET product_id = COALESCE(
+                (
+                    SELECT mr.product_id
+                    FROM meta_requirements mr
+                    WHERE mr.meta_requirement_id = experiment_orders.meta_requirement_id
+                ),
+                CASE
+                    WHEN json_valid(COALESCE(requirement_detail_json, ''))
+                    THEN CAST(json_extract(requirement_detail_json, '$._meta_product_id') AS INTEGER)
+                    ELSE NULL
+                END,
+                (
+                    SELECT i.product_id
+                    FROM items i
+                    WHERE i.item_id = experiment_orders.item_id
+                )
+            )
+            WHERE product_id IS NULL
+            """
+        )
         conn.execute(
             """
             UPDATE experiment_orders
