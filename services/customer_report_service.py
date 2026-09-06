@@ -20,13 +20,13 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from db.development_flow_repository import get_current_product_drawing_for_item
+from db.paths import CUSTOMER_FORMS_DIR, CUSTOMER_FORMS_PDF_DIR, TEMPLATES_DIR, find_korean_font
 from services.reference_data_service import get_item_row, get_molds
 
 
-INJECTION_CUSTOMER_TEMPLATE_PATH = Path("/Users/jslee/Downloads/개발_품목_성형조건표_v2_20250817.xlsm")
-INJECTION_CUSTOMER_OUTPUT_DIR = Path("/Users/jslee/Documents/개발프로세스/generated/customer_forms")
-INJECTION_CUSTOMER_PDF_DIR = Path("/Users/jslee/Documents/개발프로세스/generated/customer_forms_pdf")
-APPLE_GOTHIC_PATH = Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf")
+INJECTION_CUSTOMER_TEMPLATE_PATH = TEMPLATES_DIR / "개발_품목_성형조건표_v2_20250817.xlsm"
+INJECTION_CUSTOMER_OUTPUT_DIR = CUSTOMER_FORMS_DIR
+INJECTION_CUSTOMER_PDF_DIR = CUSTOMER_FORMS_PDF_DIR
 
 INJECTION_STAGE_CELL_MAP = {
     "사출_속도": {10: "D13", 9: "E13", 8: "F13", 7: "G13", 6: "H13", 5: "I13", 4: "J13", 3: "K13", 2: "L13", 1: "M13"},
@@ -158,10 +158,13 @@ def _trim_to_customer_form(ws) -> None:
 
 
 def _ensure_korean_font() -> str:
-    font_name = "AppleGothic"
+    font_name = "KoreanFont"
     registered = set(pdfmetrics.getRegisteredFontNames())
-    if font_name not in registered and APPLE_GOTHIC_PATH.exists():
-        pdfmetrics.registerFont(TTFont(font_name, str(APPLE_GOTHIC_PATH)))
+    if font_name not in registered:
+        font_path = find_korean_font()
+        if font_path is None:
+            return "Helvetica"
+        pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
     return font_name
 
 

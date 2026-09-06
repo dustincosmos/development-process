@@ -5,7 +5,7 @@
 ## 실행
 
 ```bash
-cd /Users/jslee/Documents/개발프로세스
+cd 개발프로세스  # 프로젝트를 내려받은 폴더로 이동
 streamlit run admin_app.py
 streamlit run dev_app.py
 streamlit run cost_app.py
@@ -18,7 +18,7 @@ streamlit run cost_app.py
 
 ## 사용자 메뉴얼
 
-- [/Users/jslee/Documents/개발프로세스/사용자_메뉴얼.md](/Users/jslee/Documents/개발프로세스/사용자_메뉴얼.md)
+- [사용자_메뉴얼.md](사용자_메뉴얼.md)
 
 ## 현재 포함 범위
 
