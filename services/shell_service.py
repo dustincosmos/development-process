@@ -328,7 +328,7 @@ def login_panel() -> bool:
                 _set_query_param_token(raw_token)
                 st.rerun()
             st.sidebar.error("아이디 또는 비밀번호를 확인해 주세요.")
-    st.sidebar.caption("기본 관리자 계정: admin / admin1234")
+    st.sidebar.caption("이카운트 ID를 사용해 주세요. ID가 없으면 관리자에게 요청해 주세요.")
     return False
 
 
