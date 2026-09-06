@@ -285,7 +285,7 @@ def render_products_page() -> None:
             with c2:
                 product_name = st.text_input("상품명", value=selected_row["product_name"] if selected_row is not None else "")
             with c3:
-                root_item_label = st.selectbox("연결 공정품", options=root_choices, index=root_choices.index(selected_root_label) if selected_root_label in root_choices else 0)
+                root_item_label = st.selectbox("최종 공정품", options=root_choices, index=root_choices.index(selected_root_label) if selected_root_label in root_choices else 0)
             notes = st.text_area("비고", height=88, value=selected_row["notes"] if selected_row is not None and pd.notna(selected_row["notes"]) else "")
             save_clicked, delete_clicked = render_page_actions(
                 [
@@ -310,7 +310,7 @@ def render_products_page() -> None:
                 elif not duplicate.empty:
                     st.error("상품코드는 중복될 수 없습니다.")
                 elif not root_item_label:
-                    st.error("연결 공정품을 선택해 주세요. 공정품이 연결되지 않으면 이후 실험/지시 단계에서 구조 조회가 되지 않습니다.")
+                    st.error("최종 공정품을 선택해 주세요. 선택하지 않으면 이후 실험/지시 단계에서 구조 조회가 되지 않습니다.")
                 else:
                     matched_root = (
                         root_items_df[root_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == root_item_label].iloc[0]
