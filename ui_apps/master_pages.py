@@ -309,6 +309,8 @@ def render_products_page() -> None:
                     st.error("상품코드와 상품명을 입력해 주세요.")
                 elif not duplicate.empty:
                     st.error("상품코드는 중복될 수 없습니다.")
+                elif not root_item_label:
+                    st.error("연결 공정품을 선택해 주세요. 공정품이 연결되지 않으면 이후 실험/지시 단계에서 구조 조회가 되지 않습니다.")
                 else:
                     matched_root = (
                         root_items_df[root_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == root_item_label].iloc[0]
