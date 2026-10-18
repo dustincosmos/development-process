@@ -364,14 +364,18 @@ def get_current_product_drawing_for_item(item_id: int) -> dict | None:
     with get_connection() as conn:
         item_row = conn.execute(
             """
-            SELECT i.project_id, pd.drawing_no
+            SELECT i.project_id, pd.project_id AS drawing_project_id, pd.drawing_no
             FROM items i
             LEFT JOIN product_drawings pd ON pd.product_drawing_id = i.product_drawing_id
             WHERE i.item_id = ?
             """,
             (item_id,),
         ).fetchone()
-        if item_row and item_row["drawing_no"]:
+        if item_row is None:
+            return None
+        if item_row["drawing_no"]:
+            # 공통 품목(프로젝트에 종속되지 않는 item, project_id가 NULL)이라도
+            # item에 직접 연결된 도면 레코드의 project_id를 기준으로 최신 리비전을 찾는다.
             latest_row = conn.execute(
                 """
                 SELECT drawing_no, drawing_name, revision_no, file_note, file_path, 0 AS used_fallback
@@ -380,20 +384,22 @@ def get_current_product_drawing_for_item(item_id: int) -> dict | None:
                 ORDER BY is_current DESC, product_drawing_id DESC
                 LIMIT 1
                 """,
-                (item_row["project_id"], item_row["drawing_no"]),
+                (item_row["drawing_project_id"], item_row["drawing_no"]),
             ).fetchone()
             if latest_row:
                 return dict(latest_row)
+        fallback_project_id = item_row["project_id"]
+        if fallback_project_id is None:
+            return None
         fallback = conn.execute(
             """
             SELECT pd.drawing_no, pd.drawing_name, pd.revision_no, pd.file_note, pd.file_path, 1 AS used_fallback
-            FROM items i
-            JOIN product_drawings pd ON pd.project_id = i.project_id
-            WHERE i.item_id = ?
+            FROM product_drawings pd
+            WHERE pd.project_id = ?
             ORDER BY pd.is_current DESC, pd.product_drawing_id DESC
             LIMIT 1
             """,
-            (item_id,),
+            (fallback_project_id,),
         ).fetchone()
     return dict(fallback) if fallback and fallback["drawing_no"] else None
 
