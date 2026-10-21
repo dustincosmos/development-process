@@ -2473,6 +2473,46 @@ def _review_text(value: object, default: str = "미입력") -> str:
     return raw or default
 
 
+def _render_requirement_prerequisite_panel(
+    *,
+    project_row: pd.Series | None,
+    selected_product_label: str,
+    root_item_id: int | None,
+    show_bom_step: bool,
+    bom_has_children: bool,
+) -> None:
+    """요구를 등록하기 전, 선행 단계가 어디까지 돼 있는지 한눈에 보여준다.
+
+    먼저 막힌 단계에서 멈추고, 그 뒤 단계는 '확인 불가'로 표시해 혼란을 줄인다.
+    """
+    owner_name = ""
+    if project_row is not None:
+        owner_name = str(project_row.get("developer_owner") or "").strip() or str(project_row.get("sales_owner") or "").strip()
+    owner_text = owner_name or "담당자"
+
+    steps: list[tuple[str, bool, str]] = [
+        ("프로젝트 등록", True, ""),
+        ("상품 등록", bool(selected_product_label), f"{owner_text}님에게 `상품` 등록을 요청하세요."),
+        ("최종 공정품 지정", bool(root_item_id), f"{owner_text}님에게 `상품`에서 최종 공정품 지정을 요청하세요."),
+    ]
+    if show_bom_step:
+        steps.append(("제품구성(BOM) 연결", bool(bom_has_children), f"{owner_text}님에게 `제품구성`에서 하위 공정품 연결을 요청하세요."))
+
+    cols = st.columns(len(steps))
+    blocked = False
+    for col, (label, ok, hint) in zip(cols, steps):
+        with col:
+            if blocked:
+                st.caption(f"⬜ {label}")
+                st.caption("앞 단계부터 먼저 확인하세요.")
+            elif ok:
+                st.success(f"✅ {label}")
+            else:
+                st.error(f"❌ {label}")
+                st.caption(hint)
+                blocked = True
+
+
 def render_customer_requirements_page(requirement_scope: str = "공정품") -> None:
     page_name = "공정품 요구" if requirement_scope == "공정품" else "조립품 요구"
     st.subheader(page_name)
@@ -2593,6 +2633,15 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             linked_item_id = selected_product_row.get("linked_item_id")
             root_source_id = linked_item_id if pd.notna(linked_item_id) else selected_product_row.get("root_item_id")
             root_item_id = int(root_source_id) if pd.notna(root_source_id) else None
+        bom_has_children = bool(root_item_id and not bom_df[bom_df["parent_item_id"] == root_item_id].empty)
+        if project_code:
+            _render_requirement_prerequisite_panel(
+                project_row=project_row,
+                selected_product_label=product_label,
+                root_item_id=root_item_id,
+                show_bom_step=not (requirement_scope == "조립품" and tree_mode == "조합"),
+                bom_has_children=bom_has_children,
+            )
         product_link_missing = bool(
             selected_product_id
             and (
