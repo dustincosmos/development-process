@@ -139,28 +139,24 @@ def _build_dashboard_timeline_rows(
     project_code: str,
     product_id: int | None,
 ) -> tuple[list[dict[str, object]], pd.Timestamp | pd.NaT, pd.Timestamp | pd.NaT]:
-    items_df = get_items()
     orders_df = get_experiment_orders()
     instructions_df = list_experiment_instructions()
     workflow_df = get_sample_workflow()
 
-    if items_df.empty or orders_df.empty:
-        return [], pd.NaT, pd.NaT
-
-    item_filter = items_df[items_df["project_code"].astype(str) == str(project_code)].copy()
-    if product_id is not None and "product_id" in item_filter.columns:
-        item_filter = item_filter[pd.to_numeric(item_filter["product_id"], errors="coerce") == int(product_id)].copy()
-    if item_filter.empty:
-        return [], pd.NaT, pd.NaT
-
-    valid_item_ids = set(pd.to_numeric(item_filter["item_id"], errors="coerce").dropna().astype(int).tolist())
-    orders_df = orders_df[
-        (orders_df["project_code"].astype(str) == str(project_code))
-        & (pd.to_numeric(orders_df["item_id"], errors="coerce").isin(valid_item_ids))
-    ].copy()
     if orders_df.empty:
         return [], pd.NaT, pd.NaT
 
+    # 공정품은 프로젝트에 소속되지 않는 공용 마스터일 수 있으므로, 품목의
+    # project_code로 먼저 품목을 추리면 공용 품목에 연결된 요구/실험이 통째로
+    # 빠진다. 대신 요구(experiment_orders) 자체가 가진 project_id를 기준으로
+    # 먼저 추리고, 거기서 쓰인 item_id로 공용/전용 품목을 모두 포함시킨다.
+    orders_df = orders_df[orders_df["project_code"].astype(str) == str(project_code)].copy()
+    if product_id is not None and "product_id" in orders_df.columns:
+        orders_df = orders_df[pd.to_numeric(orders_df["product_id"], errors="coerce") == int(product_id)].copy()
+    if orders_df.empty:
+        return [], pd.NaT, pd.NaT
+
+    valid_item_ids = set(pd.to_numeric(orders_df["item_id"], errors="coerce").dropna().astype(int).tolist())
     instructions_df = instructions_df[
         (instructions_df["project_code"].astype(str) == str(project_code))
         & (pd.to_numeric(instructions_df["item_id"], errors="coerce").isin(valid_item_ids))
@@ -172,7 +168,7 @@ def _build_dashboard_timeline_rows(
 
     item_display_map = {
         int(row["item_id"]): f"{_timeline_text(row.get('item_code'))} | {_timeline_text(row.get('item_name'))}"
-        for _, row in item_filter.dropna(subset=["item_id"]).iterrows()
+        for _, row in orders_df.dropna(subset=["item_id"]).drop_duplicates(subset=["item_id"]).iterrows()
     }
 
     rows: list[dict[str, object]] = []
@@ -899,7 +895,19 @@ def render_structure_page() -> None:
 
     with section2:
         st.markdown("**공정품**")
-        df = items[items["project_code"] == project_code]
+        # 공용 품목은 items.project_code로 안 걸리므로, 이 프로젝트의 BOM과
+        # 고객요구에 실제로 쓰인 품목까지 함께 모아서 보여준다.
+        relevant_item_ids: set[int] = set(
+            pd.to_numeric(items[items["project_code"] == project_code]["item_id"], errors="coerce").dropna().astype(int).tolist()
+        )
+        project_bom_for_items = bom[bom["project_code"] == project_code]
+        if not project_bom_for_items.empty:
+            relevant_item_ids.update(pd.to_numeric(project_bom_for_items["parent_item_id"], errors="coerce").dropna().astype(int).tolist())
+            relevant_item_ids.update(pd.to_numeric(project_bom_for_items["child_item_id"], errors="coerce").dropna().astype(int).tolist())
+        project_orders_for_items = orders[orders["project_code"] == project_code]
+        if not project_orders_for_items.empty:
+            relevant_item_ids.update(pd.to_numeric(project_orders_for_items["item_id"], errors="coerce").dropna().astype(int).tolist())
+        df = items[pd.to_numeric(items["item_id"], errors="coerce").isin(relevant_item_ids)] if relevant_item_ids else items.iloc[0:0]
         if df.empty:
             st.caption("등록 없음")
         else:

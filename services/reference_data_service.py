@@ -518,9 +518,44 @@ def item_options() -> list[tuple[str, int]]:
 
 
 def item_options_for_project(project_code: str) -> list[tuple[str, int]]:
-    df = get_items()
-    df = df[df["project_code"] == project_code]
-    return [(f"{row['item_code']} | {row['item_name']}", int(row["item_id"])) for _, row in df.iterrows()]
+    items_df = get_items()
+    if items_df.empty or not project_code:
+        return []
+
+    # 공정품은 프로젝트에 소속되지 않는 공용 마스터일 수 있으므로, 품목 자체의
+    # project_code가 아니라 그 프로젝트에서 실제로 쓰인 요구/BOM 기록을 기준으로
+    # 관련 품목을 모은다. 기존 방식(품목에 직접 project_id가 있는 경우)도 그대로 포함한다.
+    relevant_item_ids: set[int] = set(
+        pd.to_numeric(items_df[items_df["project_code"] == project_code]["item_id"], errors="coerce")
+        .dropna()
+        .astype(int)
+        .tolist()
+    )
+
+    orders_df = get_experiment_orders()
+    if not orders_df.empty:
+        project_orders = orders_df[orders_df["project_code"].astype(str) == str(project_code)]
+        relevant_item_ids.update(
+            pd.to_numeric(project_orders["item_id"], errors="coerce").dropna().astype(int).tolist()
+        )
+
+    bom_df = get_item_bom()
+    if not bom_df.empty:
+        project_bom = bom_df[bom_df["project_code"].astype(str) == str(project_code)]
+        relevant_item_ids.update(
+            pd.to_numeric(project_bom["parent_item_id"], errors="coerce").dropna().astype(int).tolist()
+        )
+        relevant_item_ids.update(
+            pd.to_numeric(project_bom["child_item_id"], errors="coerce").dropna().astype(int).tolist()
+        )
+
+    if not relevant_item_ids:
+        return []
+    df = items_df[pd.to_numeric(items_df["item_id"], errors="coerce").isin(relevant_item_ids)]
+    return [
+        (f"{row['item_code']} | {row['item_name']}", int(row["item_id"]))
+        for _, row in df.sort_values(["item_code", "item_name"]).iterrows()
+    ]
 
 
 def project_item_tree_options(project_code: str, product_id: int | None = None) -> list[tuple[str, int]]:
@@ -553,6 +588,22 @@ def project_item_tree_options(project_code: str, product_id: int | None = None) 
             legacy_items = legacy_items[
                 pd.to_numeric(legacy_items["product_id"], errors="coerce") == int(product_id)
             ].copy()
+        # 공용 품목은 items.project_code로 안 걸리므로, 이 프로젝트/상품의
+        # 요구(experiment_orders)에 실제로 쓰인 품목을 추가로 합쳐준다.
+        orders_df = get_experiment_orders()
+        if not orders_df.empty:
+            project_orders = orders_df[orders_df["project_code"].astype(str) == str(project_code)]
+            if product_id:
+                project_orders = project_orders[
+                    pd.to_numeric(project_orders["product_id"], errors="coerce") == int(product_id)
+                ]
+            known_ids = set(pd.to_numeric(legacy_items["item_id"], errors="coerce").dropna().astype(int).tolist())
+            extra_ids = set(
+                pd.to_numeric(project_orders["item_id"], errors="coerce").dropna().astype(int).tolist()
+            ) - known_ids
+            if extra_ids:
+                extra_items = items_df[pd.to_numeric(items_df["item_id"], errors="coerce").isin(extra_ids)]
+                legacy_items = pd.concat([legacy_items, extra_items], ignore_index=True)
         return [
             (f"{row['item_code']} | {row['item_name']} | {row['process_type'] or '-'}", int(row["item_id"]))
             for _, row in legacy_items.sort_values(["item_code", "item_name"]).iterrows()
