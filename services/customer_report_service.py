@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import math
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -710,6 +712,12 @@ def create_injection_customer_report_pdf_from_preview_html(
 </html>
 """
 
+    if sys.platform == "win32":
+        # Streamlit(Tornado)이 Windows에서 asyncio 정책을 WindowsSelectorEventLoopPolicy로 강제하는데,
+        # 이 정책은 서브프로세스 실행을 지원하지 않아 Playwright의 Chromium 실행 시 NotImplementedError가 발생한다.
+        # 서브프로세스를 지원하는 ProactorEventLoop 정책으로 전환해 둔다.
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         image_path = Path(tmp_dir) / "preview.png"
         with sync_playwright() as playwright:
@@ -719,9 +727,9 @@ def create_injection_customer_report_pdf_from_preview_html(
             page.locator(".pdf-page").screenshot(path=str(image_path))
             browser.close()
 
-        page_width, page_height = landscape(A4)
-        margin_x = 10 * mm
-        margin_y = 8 * mm
+        page_width, page_height = A4
+        margin_x = 5 * mm
+        margin_y = 5 * mm
         draw_w = page_width - margin_x * 2
         draw_h = page_height - margin_y * 2
         image = ImageReader(str(image_path))
@@ -732,7 +740,7 @@ def create_injection_customer_report_pdf_from_preview_html(
         x = margin_x + (draw_w - placed_w) / 2
         y = margin_y + (draw_h - placed_h) / 2
 
-        c = canvas.Canvas(str(output_path), pagesize=landscape(A4))
+        c = canvas.Canvas(str(output_path), pagesize=A4)
         c.drawImage(image, x, y, width=placed_w, height=placed_h, preserveAspectRatio=True, mask='auto')
         c.showPage()
         c.save()

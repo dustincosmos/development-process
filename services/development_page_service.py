@@ -95,23 +95,15 @@ def render_product_drawing_reference(item_id: int) -> None:
                 use_container_width=True,
                 key=f"drawing_ref_pdf_download_{item_id}",
             )
-            st.markdown(
-                f"""
-                <object
-                    data="data:application/pdf;base64,{pdf_base64}#toolbar=0&navpanes=0"
-                    type="application/pdf"
-                    width="100%"
-                    height="680"
-                    style="border:1px solid #d9d9d9; border-radius:8px;"
-                >
-                    <p style="padding:12px; margin:0;">
-                        브라우저에서 PDF 미리보기를 지원하지 않습니다.
-                        위의 다운로드 버튼으로 파일을 열어 주세요.
-                    </p>
-                </object>
-                """,
-                unsafe_allow_html=True,
+            pdf_preview_html = (
+                f'<object data="data:application/pdf;base64,{pdf_base64}#toolbar=0&navpanes=0" '
+                f'type="application/pdf" width="100%" height="680" '
+                f'style="border:1px solid #d9d9d9; border-radius:8px;">'
+                f'<p style="padding:12px; margin:0;">브라우저에서 PDF 미리보기를 지원하지 않습니다. '
+                f'위의 다운로드 버튼으로 파일을 열어 주세요.</p>'
+                f'</object>'
             )
+            st.markdown(pdf_preview_html, unsafe_allow_html=True)
         else:
             st.info("현재 파일은 이미지 미리보기를 지원하지 않습니다.")
             st.caption(path.name)
