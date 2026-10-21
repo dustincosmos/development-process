@@ -2628,7 +2628,30 @@ def render_customer_requirements_page(requirement_scope: str = "공정품") -> N
             tree_items = [(label, iid) for label, iid in tree_items if iid in descendant_ids]
         elif selected_product_id and tree_mode == "조합":
             items_df = list_items()
-            product_items_df = items_df[items_df["product_id"] == selected_product_id].copy() if not items_df.empty else items_df.iloc[0:0]
+            # 공정품은 공용 마스터라 product_id가 비어 있을 수 있으므로, 상품에 직접
+            # 연결된 품목(legacy) 외에도 이 프로젝트/상품의 BOM·요구에서 실제로 쓰인
+            # 품목을 함께 모은다.
+            relevant_item_ids: set[int] = set(
+                pd.to_numeric(items_df[items_df["product_id"] == selected_product_id]["item_id"], errors="coerce")
+                .dropna()
+                .astype(int)
+                .tolist()
+            )
+            if not bom_df.empty and "project_code" in bom_df.columns:
+                project_bom_rows = bom_df[bom_df["project_code"] == project_code]
+                relevant_item_ids.update(pd.to_numeric(project_bom_rows["parent_item_id"], errors="coerce").dropna().astype(int).tolist())
+                relevant_item_ids.update(pd.to_numeric(project_bom_rows["child_item_id"], errors="coerce").dropna().astype(int).tolist())
+            if not df.empty and "product_id" in df.columns:
+                project_order_rows = df[
+                    (df["project_code"] == project_code)
+                    & (pd.to_numeric(df["product_id"], errors="coerce") == selected_product_id)
+                ]
+                relevant_item_ids.update(pd.to_numeric(project_order_rows["item_id"], errors="coerce").dropna().astype(int).tolist())
+            product_items_df = (
+                items_df[pd.to_numeric(items_df["item_id"], errors="coerce").isin(relevant_item_ids)].copy()
+                if relevant_item_ids
+                else items_df.iloc[0:0]
+            )
             tree_items = [
                 (f"{str(row['item_code']).strip()} | {str(row['item_name']).strip()}", int(row["item_id"]))
                 for _, row in product_items_df.iterrows()
