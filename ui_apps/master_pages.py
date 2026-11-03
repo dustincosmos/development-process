@@ -31,6 +31,7 @@ from services import master_service
 from services.reference_data_service import (
     get_item_bom,
     get_items,
+    get_molds,
     get_products,
     get_print_films,
     get_product_drawings,
@@ -366,6 +367,30 @@ def render_items_page() -> None:
         project_raw_materials = raw_material_options_for_project(selected_project_code) if selected_project_code else []
         drawings_df = get_product_drawings()
         films_df = get_print_films()
+        molds_df = get_molds()
+        # 공정품은 공용 마스터라 "기준 프로젝트(선택)"과 무관하게 이미 연결된
+        # 도면/금형/원화가 있을 수 있다. 그 프로젝트를 고르지 않으면 목록에서
+        # 안 보여서 "연결이 끊긴 것"처럼 보이므로, 현재 품목에 실제로 연결된
+        # 값은 선택 필터와 무관하게 항상 선택지에 포함시킨다.
+        if selected_row is not None:
+            current_drawing_id = selected_row.get("product_drawing_id")
+            if pd.notna(current_drawing_id) and not any(did == int(current_drawing_id) for _, did in project_drawings):
+                match = drawings_df[drawings_df["product_drawing_id"] == int(current_drawing_id)]
+                if not match.empty:
+                    row = match.iloc[0]
+                    project_drawings = project_drawings + [(f"{row['project_code']} | {row['drawing_no']} | {row['revision_no']}", int(current_drawing_id))]
+            current_mold_id = selected_row.get("primary_mold_id")
+            if pd.notna(current_mold_id) and not any(mid == int(current_mold_id) for _, mid in project_molds):
+                match = molds_df[molds_df["mold_id"] == int(current_mold_id)]
+                if not match.empty:
+                    row = match.iloc[0]
+                    project_molds = project_molds + [(f"{row['project_code']} | {row['mold_code']} | {row['mold_name']}", int(current_mold_id))]
+            current_film_id = selected_row.get("base_print_film_id")
+            if pd.notna(current_film_id) and not any(fid == int(current_film_id) for _, fid in project_films):
+                match = films_df[films_df["print_film_id"] == int(current_film_id)]
+                if not match.empty:
+                    row = match.iloc[0]
+                    project_films = project_films + [(f"{row['artwork_type']} | {row['film_code']} | {row['film_name']} | {row['revision_no']}", int(current_film_id))]
         with pick_c4:
             st.text_input("등록 모드", value="신규 등록" if selected_row is None else "기존 수정", disabled=True, key="item_mode")
         with st.container(border=True):
