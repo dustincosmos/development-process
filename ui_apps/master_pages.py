@@ -29,6 +29,7 @@ from domain.constants import (
 )
 from services import master_service
 from services.reference_data_service import (
+    get_experiment_orders,
     get_item_bom,
     get_items,
     get_molds,
@@ -361,10 +362,35 @@ def render_items_page() -> None:
             selected_label = st.selectbox("공정품 선택", options=labels, key="item_pick_label")
         if selected_label != "신규 등록":
             selected_row = project_items_df[project_items_df.apply(lambda row: f"{row['item_code']} | {row['item_name']}", axis=1) == selected_label].iloc[0]
-        project_drawings = [pair for pair in product_drawing_options() if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
-        project_molds = [pair for pair in mold_options() if pair[0].split(" | ")[0] == selected_project_code] if selected_project_code else []
-        project_films = film_options_for_project(selected_project_code) if selected_project_code else []
-        project_raw_materials = raw_material_options_for_project(selected_project_code) if selected_project_code else []
+        # 공정품은 공용 마스터라 "기준 프로젝트(선택)"를 안 고르면 도면/금형 후보가
+        # 하나도 안 나온다. 선택한 품목이 실제로 어느 프로젝트의 BOM·요구에 쓰였는지
+        # 자동으로 찾아서, 그 프로젝트(들)의 도면/금형도 후보에 같이 넣어준다.
+        auto_project_codes: set[str] = set()
+        if selected_row is not None:
+            lookup_item_id = int(selected_row["item_id"])
+            bom_all_df = get_item_bom()
+            if not bom_all_df.empty:
+                related_bom = bom_all_df[
+                    (bom_all_df["parent_item_id"] == lookup_item_id) | (bom_all_df["child_item_id"] == lookup_item_id)
+                ]
+                auto_project_codes.update(related_bom["project_code"].dropna().astype(str).tolist())
+            orders_all_df = get_experiment_orders()
+            if not orders_all_df.empty and "item_id" in orders_all_df.columns:
+                related_orders = orders_all_df[pd.to_numeric(orders_all_df["item_id"], errors="coerce") == lookup_item_id]
+                auto_project_codes.update(related_orders["project_code"].dropna().astype(str).tolist())
+        effective_project_codes = set(auto_project_codes)
+        if selected_project_code:
+            effective_project_codes.add(selected_project_code)
+        if auto_project_codes - ({selected_project_code} if selected_project_code else set()):
+            st.caption(
+                "이 품목이 실제로 쓰인 프로젝트(" + ", ".join(sorted(auto_project_codes)) + ")의 도면/금형도 후보에 자동으로 포함했습니다."
+            )
+        project_drawings = [pair for pair in product_drawing_options() if pair[0].split(" | ")[0] in effective_project_codes]
+        project_molds = [pair for pair in mold_options() if pair[0].split(" | ")[0] in effective_project_codes]
+        project_films = []
+        for _code in effective_project_codes:
+            project_films += film_options_for_project(_code)
+        project_raw_materials = raw_material_options_for_project(selected_project_code)
         drawings_df = get_product_drawings()
         films_df = get_print_films()
         molds_df = get_molds()
